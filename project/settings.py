@@ -42,8 +42,15 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
+    'channels',
+    
     #app
-
+    'manager',
+    'booth',
+    'menu',
+    'order',
+    'cart',
+    'coupon',
 
     #drf
     'rest_framework',
@@ -56,7 +63,7 @@ MIDDLEWARE = [
     'django.contrib.sessions.middleware.SessionMiddleware',
 
     # corsheaders
-    'corsheaders.middleware.CorsMiddleware' #순서 중요 commmiddleware보다 위에!
+    'corsheaders.middleware.CorsMiddleware', #순서 중요 commmiddleware보다 위에!
     'django.middleware.common.CommonMiddleware',
 
 
@@ -86,6 +93,16 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'project.wsgi.application'
 
+ASGI_APPLICATION = 'project.asgi.application'
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [("127.0.0.1", 6379)],
+        },
+    },
+}
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
