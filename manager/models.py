@@ -3,7 +3,7 @@ from booth.models import Booth
 from django.contrib.auth.models import User
 
 class Manager(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True,related_name="manager_prifile") # user를 manager pk로 사용
+    user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True,related_name="manager_profile") # user를 manager pk로 사용
     booth = models.OneToOneField(Booth, on_delete=models.CASCADE)
     booth_name = models.CharField(max_length=100)
     table_num = models.IntegerField(default=1)
