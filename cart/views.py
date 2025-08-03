@@ -6,6 +6,7 @@ from cart.models import *
 from cart.serializers import *
 from booth.models import *
 from menu.models import *
+from manager.models import *
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -219,3 +220,24 @@ class CartMenuUpdateView(APIView):
 
         else:
             return Response({"status": "fail", "message": "type은 menu 또는 set_menu이어야 합니다."}, status=400)
+        
+class PaymentInfoView(APIView):
+    def get(self, request):
+        booth_id = request.headers.get("Booth-ID")
+        if not booth_id:
+            return Response({
+                "status": "fail",
+                "message": "Booth-ID 헤더가 누락되었습니다."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        manager = get_object_or_404(Manager, booth_id=booth_id)
+
+        return Response({
+            "status": "success",
+            "code": 200,
+            "data": {
+                "bank_name": manager.bank,
+                "account_number": manager.account,
+                "account_holder": manager.depositor
+            }
+        }, status=status.HTTP_200_OK)
