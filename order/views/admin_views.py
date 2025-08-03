@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 
@@ -113,3 +114,106 @@ class OrderListView(APIView):
                 "orders": orders
             }
         }, status=200)
+        
+class KitchenOrderCookedView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, order_id):
+        try:
+            order = Order.objects.get(id=order_id)
+        except Order.DoesNotExist:
+            return Response({
+                "status": "error",
+                "code": 404,
+                "message": "해당 주문이 존재하지 않습니다."
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        if order.order_status in ["served", "cancelled"]:
+            return Response({
+                "status": "error",
+                "code": 400,
+                "message": "이미 완료된 주문은 상태를 변경할 수 없습니다."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if order.order_status != "preparing":
+            return Response({
+                "status": "error",
+                "code": 400,
+                "message": "조리 준비 상태가 아닌 주문은 조리 완료로 변경할 수 없습니다."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        order.order_status = "cooked"
+        order.save()
+
+        order_menu = OrderMenu.objects.filter(order=order).first()
+        order_set = OrderSetMenu.objects.filter(order=order).first()
+
+        if order_menu:
+            serializer = OrderMenuSerializer(order_menu)
+            menu_type = "단일"
+        elif order_set:
+            serializer = OrderSetMenuSerializer(order_set)
+            menu_type = "세트"
+        else:
+            return Response({
+                "status": "error",
+                "code": 400,
+                "message": "주문에 해당하는 메뉴 정보가 없습니다."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.data
+        data["menu_type"] = menu_type
+
+        return Response({
+            "status": "success",
+            "code": 200,
+            "data": data
+        }, status=status.HTTP_200_OK)
+        
+class ServingOrderCompleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, order_id):
+        try:
+            order = Order.objects.get(id=order_id)
+        except Order.DoesNotExist:
+            return Response({
+                "status": "error",
+                "code": 404,
+                "message": "해당 주문이 존재하지 않습니다."
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        if order.order_status != "cooked":
+            return Response({
+                "status": "error",
+                "code": 400,
+                "message": "조리 완료 상태가 아닌 주문은 서빙 완료로 변경할 수 없습니다."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        order.order_status = "served"
+        order.save()
+
+        order_menu = OrderMenu.objects.filter(order=order).first()
+        order_set = OrderSetMenu.objects.filter(order=order).first()
+
+        if order_menu:
+            serializer = OrderMenuSerializer(order_menu)
+            menu_type = "단일"
+        elif order_set:
+            serializer = OrderSetMenuSerializer(order_set)
+            menu_type = "세트"
+        else:
+            return Response({
+                "status": "error",
+                "code": 400,
+                "message": "주문에 해당하는 메뉴 정보가 없습니다."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.data
+        data["menu_type"] = menu_type
+
+        return Response({
+            "status": "success",
+            "code": 200,
+            "data": data
+        }, status=status.HTTP_200_OK)
