@@ -1,7 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.status import HTTP_201_CREATED, HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND, HTTP_409_CONFLICT
+from rest_framework.status import HTTP_200_OK, HTTP_201_CREATED, HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND, HTTP_409_CONFLICT
 from cart.models import *
 from cart.serializers import *
 from booth.models import *
@@ -111,3 +111,62 @@ class CartAddView(APIView):
                 }
             }
         }, status=HTTP_201_CREATED)
+        
+class CartMenuUpdateView(APIView):
+    def patch(self, request, menu_id):
+        booth_id = request.headers.get("Booth-ID")
+        if not booth_id:
+            return Response({"status": "fail", "message": "Booth-ID 헤더가 누락되었습니다."}, status=400)
+
+        table_num = request.data.get("table_num")
+        type_ = request.data.get("type")
+        quantity = request.data.get("quantity")
+
+        if not all([table_num, type_, quantity is not None]):
+            return Response({"status": "fail", "message": "요청 데이터가 누락되었습니다."}, status=400)
+
+        if type_ != "menu":
+            return Response({"status": "fail", "message": "현재는 menu 타입만 지원됩니다."}, status=400)
+
+        try:
+            table = Table.objects.get(table_num=table_num, booth_id=booth_id)
+            cart = Cart.objects.get(table=table, is_ordered=False)
+            cart_item = CartMenu.objects.get(cart=cart, menu_id=menu_id)
+            menu = Menu.objects.get(id=menu_id, booth_id=booth_id)
+        except (Table.DoesNotExist, Cart.DoesNotExist, CartMenu.DoesNotExist, Menu.DoesNotExist):
+            return Response({"status": "fail", "message": "해당 항목을 찾을 수 없습니다."}, status=404)
+
+        if quantity < 0:
+            return Response({"status": "fail", "message": "수량은 0 이상이어야 합니다."}, status=400)
+
+        if quantity == 0:
+            cart_item.delete()
+            return Response({
+                "status": "success",
+                "code": 200,
+                "message": "장바구니에서 해당 메뉴가 삭제되었습니다.",
+                "data": {"table_num": table_num}
+            }, status=200)
+
+        if menu.menu_amount < quantity:
+            return Response({"status": "fail", "message": "메뉴 재고가 부족합니다."}, status=409)
+
+        cart_item.quantity = quantity
+        cart_item.save()
+
+        return Response({
+            "status": "success",
+            "code": 200,
+            "message": "장바구니 수량이 수정되었습니다.",
+            "data": {
+                "table_num": table_num,
+                "cart_item": {
+                    "type": "menu",
+                    "id": menu_id,
+                    "menu_name": menu.menu_name,
+                    "quantity": quantity,
+                    "menu_price": menu.menu_price,
+                    "menu_image": menu.menu_image.url if menu.menu_image else None
+                }
+            }
+        }, status=200)
