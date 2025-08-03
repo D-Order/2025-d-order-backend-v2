@@ -125,48 +125,97 @@ class CartMenuUpdateView(APIView):
         if not all([table_num, type_, quantity is not None]):
             return Response({"status": "fail", "message": "요청 데이터가 누락되었습니다."}, status=400)
 
-        if type_ != "menu":
-            return Response({"status": "fail", "message": "현재는 menu 타입만 지원됩니다."}, status=400)
+        if quantity < 0:
+            return Response({"status": "fail", "message": "수량은 0 이상이어야 합니다."}, status=400)
 
         try:
             table = Table.objects.get(table_num=table_num, booth_id=booth_id)
             cart = Cart.objects.get(table=table, is_ordered=False)
-            cart_item = CartMenu.objects.get(cart=cart, menu_id=menu_id)
-            menu = Menu.objects.get(id=menu_id, booth_id=booth_id)
-        except (Table.DoesNotExist, Cart.DoesNotExist, CartMenu.DoesNotExist, Menu.DoesNotExist):
-            return Response({"status": "fail", "message": "해당 항목을 찾을 수 없습니다."}, status=404)
+        except (Table.DoesNotExist, Cart.DoesNotExist):
+            return Response({"status": "fail", "message": "테이블 또는 장바구니를 찾을 수 없습니다."}, status=404)
 
-        if quantity < 0:
-            return Response({"status": "fail", "message": "수량은 0 이상이어야 합니다."}, status=400)
+        if type_ == "menu":
+            try:
+                cart_item = CartMenu.objects.get(cart=cart, menu_id=menu_id)
+                menu = Menu.objects.get(id=menu_id, booth_id=booth_id)
+            except (CartMenu.DoesNotExist, Menu.DoesNotExist):
+                return Response({"status": "fail", "message": "해당 메뉴를 찾을 수 없습니다."}, status=404)
 
-        if quantity == 0:
-            cart_item.delete()
+            if quantity == 0:
+                cart_item.delete()
+                return Response({
+                    "status": "success",
+                    "code": 200,
+                    "message": "장바구니에서 해당 메뉴가 삭제되었습니다.",
+                    "data": {"table_num": table_num}
+                }, status=200)
+
+            if menu.menu_amount < quantity:
+                return Response({"status": "fail", "message": "메뉴 재고가 부족합니다."}, status=409)
+
+            cart_item.quantity = quantity
+            cart_item.save()
+
             return Response({
                 "status": "success",
                 "code": 200,
-                "message": "장바구니에서 해당 메뉴가 삭제되었습니다.",
-                "data": {"table_num": table_num}
+                "message": "장바구니 수량이 수정되었습니다.",
+                "data": {
+                    "table_num": table_num,
+                    "cart_item": {
+                        "type": "menu",
+                        "id": menu_id,
+                        "menu_name": menu.menu_name,
+                        "quantity": quantity,
+                        "menu_price": menu.menu_price,
+                        "menu_image": menu.menu_image.url if menu.menu_image else None
+                    }
+                }
             }, status=200)
 
-        if menu.menu_amount < quantity:
-            return Response({"status": "fail", "message": "메뉴 재고가 부족합니다."}, status=409)
+        elif type_ == "set_menu":
+            try:
+                cart_item = CartSetMenu.objects.get(cart=cart, set_menu_id=menu_id)
+                set_menu = SetMenu.objects.get(id=menu_id, booth_id=booth_id)
+            except (CartSetMenu.DoesNotExist, SetMenu.DoesNotExist):
+                return Response({"status": "fail", "message": "해당 세트메뉴를 찾을 수 없습니다."}, status=404)
 
-        cart_item.quantity = quantity
-        cart_item.save()
+            if quantity == 0:
+                cart_item.delete()
+                return Response({
+                    "status": "success",
+                    "code": 200,
+                    "message": "장바구니에서 해당 세트메뉴가 삭제되었습니다.",
+                    "data": {"table_num": table_num}
+                }, status=200)
 
-        return Response({
-            "status": "success",
-            "code": 200,
-            "message": "장바구니 수량이 수정되었습니다.",
-            "data": {
-                "table_num": table_num,
-                "cart_item": {
-                    "type": "menu",
-                    "id": menu_id,
-                    "menu_name": menu.menu_name,
-                    "quantity": quantity,
-                    "menu_price": menu.menu_price,
-                    "menu_image": menu.menu_image.url if menu.menu_image else None
+            for item in SetMenuItem.objects.filter(set_menu=set_menu):
+                required = item.quantity * quantity
+                if item.menu.menu_amount < required:
+                    return Response({
+                        "status": "fail",
+                        "message": f"{item.menu.menu_name}의 재고가 부족합니다."
+                    }, status=409)
+
+            cart_item.quantity = quantity
+            cart_item.save()
+
+            return Response({
+                "status": "success",
+                "code": 200,
+                "message": "장바구니 수량이 수정되었습니다.",
+                "data": {
+                    "table_num": table_num,
+                    "cart_item": {
+                        "type": "set_menu",
+                        "id": menu_id,
+                        "menu_name": set_menu.set_name,
+                        "quantity": quantity,
+                        "menu_price": set_menu.set_price,
+                        "menu_image": set_menu.set_image.url if set_menu.set_image else None
+                    }
                 }
-            }
-        }, status=200)
+            }, status=200)
+
+        else:
+            return Response({"status": "fail", "message": "type은 menu 또는 set_menu이어야 합니다."}, status=400)
