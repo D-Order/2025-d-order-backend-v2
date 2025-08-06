@@ -4,10 +4,11 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.exceptions import PermissionDenied
 from menu.models import Menu, SetMenu, SetMenuItem
 from booth.models import Booth
-from menu.serializers.booth_menu import MenuSerializer, SetMenuItemSerializer, SetMenuSerializer
+from menu.serializers import MenuSerializer, SetMenuItemSerializer, SetMenuSerializer
 from manager.models import Manager
 from order.models import OrderMenu, OrderSetMenu
 from menu.models import SetMenuItem
+
 
 class IsManagerUser(permissions.BasePermission):
     """로그인한 사용자가 Manager와 연결되어 있는지 확인"""
@@ -235,3 +236,48 @@ class SetMenuViewSet(viewsets.ModelViewSet):
         # 실제 주문/카트 연동이 있다면 이 부분에서 삭제 불가 체크!
         setmenu.delete()
         return Response({"status":204, "message":"삭제 완료.", "data":None}, status=204)
+    
+class BoothAllMenusViewSet(viewsets.ViewSet):
+    permission_classes = [permissions.IsAuthenticated, IsManagerUser]
+
+    def list(self, request):
+        user = request.user
+        manager = getattr(user, 'manager_profile', None)
+        if manager is None:
+            return Response({
+                "status": 403,
+                "message": "운영진만 접근할 수 있습니다.",
+                "data": None
+            }, status=403)
+
+        booth = manager.booth
+
+        # 테이블이용료 정보
+        table_info = []
+        if manager.seat_type == "PP":
+            table_info = {
+                "seat_type": "person",
+                "seat_tax_person": manager.seat_tax_person
+            }
+        elif manager.seat_type == "PT":
+            table_info = {
+                "seat_type": "table",
+                "seat_tax_table": manager.seat_tax_table
+            }
+        # seat_type == "NO"면 table_info 그대로 [] (빈배열)
+
+        menus = MenuSerializer(Menu.objects.filter(booth=booth), many=True, context={"request": request}).data
+        setmenus = SetMenuSerializer(SetMenu.objects.filter(booth=booth), many=True, context={"request": request}).data
+
+        data = {
+            "booth_id": booth.pk,
+            "table": table_info if table_info else [],  # 없으면 항상 []로 반환!
+            "menus": menus,
+            "setmenus": setmenus,
+        }
+
+        return Response({
+            "status": 200,
+            "message": "부스 메뉴 목록(메뉴, 세트메뉴, 테이블이용료)이 성공적으로 조회되었습니다.",
+            "data": data
+        }, status=200)

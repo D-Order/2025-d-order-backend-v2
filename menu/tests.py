@@ -1,4 +1,5 @@
 import io
+import json
 from PIL import Image
 from django.urls import reverse
 from rest_framework.test import APITestCase, APIClient
@@ -6,7 +7,6 @@ from django.contrib.auth import get_user_model
 from manager.models import Manager
 from booth.models import Booth
 from menu.models import Menu, SetMenu, SetMenuItem
-import json
 
 User = get_user_model()
 
@@ -23,7 +23,6 @@ class MenuAndSetMenuAPITest(APITestCase):
         self.user = User.objects.create_user(username='mgr', password='pw')
         self.booth = Booth.objects.create(
             booth_name='테스트부스'
-            # 필요하면 Booth 필수 필드 추가!
         )
         self.manager = Manager.objects.create(
             user=self.user,
@@ -33,8 +32,8 @@ class MenuAndSetMenuAPITest(APITestCase):
             account="123-456-789",
             bank="테스트은행",
             depositor="홍길동",
-            seat_type="NO",
-            seat_tax_person=0,
+            seat_type="PP",       # <- "NO"로 하면 table: []로 응답 (아래 조회 테스트 seat_type별 참고)
+            seat_tax_person=5000,
             seat_tax_table=0,
             table_limit_hours=2,
         )
@@ -104,13 +103,11 @@ class MenuAndSetMenuAPITest(APITestCase):
             "menu_items": json.dumps(menu_items)
         }
         resp = self.client.post(url, data, format='multipart')
-        print(resp.data)  # 항상 디버깅용 출력
         self.assertEqual(resp.status_code, 201)
         self.assertEqual(resp.data['data']['set_name'], "세트메뉴A")
 
     # --------- 세트메뉴 수정 ----------
     def test_setmenu_update(self):
-        # 먼저 세트메뉴를 만들고(이전 테스트 이용 X),
         setmenu = SetMenu.objects.create(
             booth=self.booth,
             set_name="세트메뉴B",
@@ -129,8 +126,8 @@ class MenuAndSetMenuAPITest(APITestCase):
             menu_amount=5
         )
         update_menu_items = [
-        {"menu_id": self.menu.id, "quantity": 1},
-        {"menu_id": new_menu.id, "quantity": 2},
+            {"menu_id": self.menu.id, "quantity": 1},
+            {"menu_id": new_menu.id, "quantity": 2},
         ]
         data = {
             "set_name": "수정된세트",
@@ -138,7 +135,6 @@ class MenuAndSetMenuAPITest(APITestCase):
             "menu_items": update_menu_items  # 리스트 그대로!
         }
         resp = self.client.patch(url, data, format='json')
-        print(resp.data)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data['data']['set_name'], "수정된세트")
         self.assertEqual(len(resp.data['data']['menu_items']), 2)
@@ -157,3 +153,23 @@ class MenuAndSetMenuAPITest(APITestCase):
         resp = self.client.delete(url)
         self.assertEqual(resp.status_code, 204)
         self.assertFalse(SetMenu.objects.filter(id=setmenu.id).exists())
+
+    # --------- 부스 전체 메뉴/세트메뉴/테이블 이용료 일괄조회 ----------
+    def test_booth_all_menus_admin(self):
+        """
+        운영자용 전체조회 (로그인 필요, 자신의 booth만)
+        """
+        url = reverse('booth-all-menus-list')  # ViewSet + router 등록시 자동 reverse
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("booth_id", resp.data['data'])
+        self.assertIn("menus", resp.data['data'])
+        self.assertIn("setmenus", resp.data['data'])
+        # 테이블 이용료 seat_type=="PP"나 "PT"면 반드시 포함
+        if self.manager.seat_type in ("PP", "PT"):
+            self.assertIn("table", resp.data['data'])
+            self.assertTrue(resp.data['data']['table'])
+        else:
+            # seat_type="NO"라면 table == [] 또는 없거나.
+            self.assertIn("table", resp.data['data'])
+            self.assertEqual(resp.data['data']["table"], [])
