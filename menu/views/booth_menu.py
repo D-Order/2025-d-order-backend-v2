@@ -2,9 +2,9 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.exceptions import PermissionDenied
-from menu.models import Menu
+from menu.models import Menu, SetMenu, SetMenuItem
 from booth.models import Booth
-from menu.serializers.booth_menu import MenuSerializer
+from menu.serializers.booth_menu import MenuSerializer, SetMenuItemSerializer, SetMenuSerializer
 from manager.models import Manager
 from order.models import OrderMenu, OrderSetMenu
 from menu.models import SetMenuItem
@@ -167,3 +167,71 @@ class MenuViewSet(viewsets.ModelViewSet):
             status=204
         )
 
+class SetMenuViewSet(viewsets.ModelViewSet):
+    queryset = SetMenu.objects.all()
+    serializer_class = SetMenuSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    permission_classes = [permissions.IsAuthenticated, IsManagerUser]
+
+    def get_booth(self):
+        try:
+            manager = self.request.user.manager_profile
+            return manager.booth
+        except Manager.DoesNotExist:
+            raise permissions.PermissionDenied("Manager 프로필이 없습니다.")
+
+    def get_queryset(self):
+        booth = self.get_booth()
+        return SetMenu.objects.filter(booth=booth)
+
+    def create(self, request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return Response({"status":401, "message":"로그인이 필요합니다.", "data":None}, status=401)
+
+        booth = self.get_booth()
+        serializer = self.get_serializer(data=request.data, context={"booth": booth, "request": request})
+        if not serializer.is_valid():
+            return Response({"status":400, "message":"요청 값이 올바르지 않습니다.", "data": serializer.errors}, status=400)
+
+        setmenu = serializer.save()
+        return Response({"status":201, "message":"세트메뉴가 정상 등록되었습니다.", "data": serializer.data}, status=201)
+    
+    def partial_update(self, request, *args, **kwargs):
+        """PATCH (부분 수정) 또는 PUT (전체 수정)"""
+        if not request.user.is_authenticated:
+            return Response(
+                {"status": 401, "message": "로그인이 필요합니다.", "data": None},
+                status=401
+            )
+        booth = self.get_booth()
+        pk = kwargs.get("pk") or kwargs.get("setmenu_id")
+        try:
+            setmenu = SetMenu.objects.get(pk=pk, booth=booth)
+        except SetMenu.DoesNotExist:
+            return Response(
+                {"status": 404, "message": "존재하지 않는 세트메뉴입니다.", "data": None},
+                status=404)
+
+        data = request.data.copy()
+        serializer = self.get_serializer(
+            setmenu, data=data, partial=True, context={"booth": booth, "request": request}
+        )
+        if not serializer.is_valid():
+            return Response(
+                {"status": 400, "message": "요청 값이 올바르지 않습니다.", "data": serializer.errors},
+                status=400
+            )
+        updated = serializer.save()
+        return Response({"status": 200, "message":"세트메뉴가 정상 수정되었습니다.", "data": serializer.data}, status=200)
+
+    def destroy(self, request, *args, **kwargs):
+        booth = self.get_booth()
+        pk = kwargs.get('pk')
+        try:
+            setmenu = SetMenu.objects.get(pk=pk, booth=booth)
+        except SetMenu.DoesNotExist:
+            return Response({"status":404, "message":"존재하지 않는 세트메뉴입니다.", "data":None}, status=404)
+
+        # 실제 주문/카트 연동이 있다면 이 부분에서 삭제 불가 체크!
+        setmenu.delete()
+        return Response({"status":204, "message":"삭제 완료.", "data":None}, status=204)

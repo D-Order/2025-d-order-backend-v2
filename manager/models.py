@@ -6,7 +6,7 @@ class Manager(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True,related_name="manager_profile") # user를 manager pk로 사용
     booth = models.OneToOneField(Booth, on_delete=models.CASCADE)
     table_num = models.IntegerField(default=1)
-    order_check_password = models.CharField()
+    order_check_password = models.CharField(max_length=100)
     account = models.CharField(max_length=100)
     bank = models.CharField(max_length=100)
     depositor = models.CharField(max_length=20, default="Unknown")
