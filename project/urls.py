@@ -26,6 +26,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/v2/',include('manager.urls')),
     path('api/v2/', include('menu.urls')),
+    path('api/v2/',include('booth.urls')),
     path('api/v2/booth/', include('order.urls.booth_urls')),  # 운영자용
     path('api/v2/tables/', include('order.urls.table_urls')), # 손님용
     path('api/v2/cart/', include('cart.urls')),
