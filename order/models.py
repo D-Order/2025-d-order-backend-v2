@@ -46,3 +46,5 @@ class OrderSetMenu(models.Model):
 
     def get_total_price(self):
         return self.fixed_price * self.quantity
+    
+
