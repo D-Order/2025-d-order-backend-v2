@@ -8,6 +8,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from django.shortcuts import get_object_or_404
 from manager.models import Manager
+from booth.models import Booth, Table
 from django.conf import settings
 import jwt
 from django.http import FileResponse
@@ -21,6 +22,16 @@ class SignupView(APIView):
             manager = serializer.save()
             booth = manager.booth
             user = manager.user
+            
+            # ---- [여기서 테이블 자동 생성!] ----
+            table_count = manager.table_num  # 매니저가 입력한 값 (예: 5)
+            # 이미 테이블이 있다면 중복 방지(새 부스일 때만)
+            for i in range(1, table_count + 1):
+                Table.objects.create(
+                    booth=booth,
+                    table_num=i,
+                    status="out",
+                )
 
             # JWT 토큰 생성
             token = TokenObtainPairSerializer.get_token(user)

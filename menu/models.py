@@ -46,7 +46,7 @@ class Menu(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.id} - {self.menu_name} ({self.menu_category})"
+        return f"{self.id} - {self.menu_name} - {self.booth.booth_name}"
 
 class SetMenu(models.Model):
     id = models.AutoField(primary_key=True)
@@ -91,7 +91,7 @@ class SetMenu(models.Model):
         super().save(*args, **kwargs)
     
     def __str__(self):
-        return f"{self.set_name} ({self.set_price})"
+        return f"{self.id} - {self.set_name} - {self.booth.booth_name}"
 
 
 class SetMenuItem(models.Model):
