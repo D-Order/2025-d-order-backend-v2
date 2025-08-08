@@ -13,6 +13,28 @@ from booth.models import *
 from manager.models import *
 from order.serializers import *
 
+def get_table_fee_and_type_by_booth(booth_id: int):
+    m = Manager.objects.filter(booth_id=booth_id).first()
+    if not m:
+        return 0, "none"
+    if m.seat_type == "PP":
+        return int(m.seat_tax_person or 0), "person"
+    if m.seat_type == "PT":
+        return int(m.seat_tax_table or 0), "table"
+    return 0, "none"
+
+def is_first_order_for_table_session(order: Order):
+    m = Manager.objects.filter(booth_id=order.table.booth_id).first()
+    limit_hours = int(getattr(m, "table_limit_hours", 0) or 0)
+
+    qs = Order.objects.filter(table_id=order.table_id)
+    if limit_hours > 0:
+        window_start = order.created_at - timedelta(hours=limit_hours)
+        qs = qs.filter(created_at__gte=window_start, created_at__lte=order.created_at)
+    first = qs.order_by("created_at").first()
+    return first and first.id == order.id
+
+
 class OrderCancelView(APIView):
     def patch(self, request, order_id):
         order = get_object_or_404(Order, pk=order_id)
@@ -29,7 +51,7 @@ class OrderCancelView(APIView):
                 for item in cancel_items:
                     item_type = item.get("type")
                     item_id = item.get("id")
-                    qty = item.get("quantity")
+                    qty = int(item.get("quantity", 0))
 
                     if item_type not in ["menu", "setmenu"] or qty < 1:
                         raise ValueError("요청 형식이 잘못되었습니다.")
@@ -63,11 +85,12 @@ class OrderCancelView(APIView):
 
                         refund_price += osm.fixed_price * qty
 
+                order.order_amount = max(0, (order.order_amount or 0) - refund_price)
                 order.order_status = "cancelled"
                 order.save()
 
                 booth = Booth.objects.get(pk=order.table.booth_id)
-                booth.total_revenues = max(0, booth.total_revenues - refund_price)
+                booth.total_revenues = max(0, (booth.total_revenues or 0) - refund_price)
                 booth.save()
 
         except ValueError as e:
@@ -77,9 +100,11 @@ class OrderCancelView(APIView):
 
 
 class OrderListView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        user = request.user
-        booth_id = Manager.objects.get(username=user.username).booth_id
+        manager = Manager.objects.get(user=request.user)
+        booth_id = manager.booth_id
 
         type_param = request.GET.get("type")
         if type_param not in ["kitchen", "serving"]:
@@ -90,7 +115,7 @@ class OrderListView(APIView):
 
         order_query = Order.objects.filter(table__booth_id=booth_id)
         if type_param == "kitchen":
-            order_query = order_query.filter(order_status__in=["pending", "accepted"])
+            order_query = order_query.filter(order_status__in=["pending", "accepted", "preparing"])
         elif type_param == "serving":
             order_query = order_query.filter(order_status__in=["cooked", "served"])
 
@@ -99,14 +124,37 @@ class OrderListView(APIView):
         if category_filter:
             order_query = order_query.filter(ordermenu__menu__menu_category__icontains=category_filter)
 
-        order_query = order_query.distinct().order_by("-created_at")
+        order_query = order_query.distinct().order_by("table_id", "created_at")
 
         total_revenue = Booth.objects.get(pk=booth_id).total_revenues
 
+        first_order_by_table = {}
+        for o in order_query:
+            if o.table_id not in first_order_by_table:
+                first_order_by_table[o.table_id] = o.id
+
         orders = []
         for order in order_query:
-            orders += OrderMenuSerializer(OrderMenu.objects.filter(order=order), many=True).data
-            orders += OrderSetMenuSerializer(OrderSetMenu.objects.filter(order=order), many=True).data
+            items = []
+            items += OrderMenuSerializer(OrderMenu.objects.filter(order=order), many=True).data
+            items += OrderSetMenuSerializer(OrderSetMenu.objects.filter(order=order), many=True).data
+
+            if first_order_by_table.get(order.table_id) == order.id:
+                fee, seat_type = get_table_fee_and_type_by_booth(order.table.booth_id)
+                if fee and fee > 0:
+                    items.insert(0, {
+                        "id": None,
+                        "order": order.id,
+                        "menu_name": "테이블 이용료",
+                        "fixed_price": fee,
+                        "quantity": 1,
+                        "menu_type": "이용료",
+                        "is_table_fee": True,
+                        "seat_type": seat_type,  
+                        "created_at": order.created_at,
+                    })
+
+            orders.extend(items)
 
         return Response({
             "status": "success",
@@ -116,7 +164,8 @@ class OrderListView(APIView):
                 "orders": orders
             }
         }, status=200)
-        
+
+
 class KitchenOrderCookedView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -124,25 +173,13 @@ class KitchenOrderCookedView(APIView):
         try:
             order = Order.objects.get(id=order_id)
         except Order.DoesNotExist:
-            return Response({
-                "status": "error",
-                "code": 404,
-                "message": "해당 주문이 존재하지 않습니다."
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({"status": "error", "code": 404, "message": "해당 주문이 존재하지 않습니다."}, status=404)
 
         if order.order_status in ["served", "cancelled"]:
-            return Response({
-                "status": "error",
-                "code": 400,
-                "message": "이미 완료된 주문은 상태를 변경할 수 없습니다."
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"status": "error", "code": 400, "message": "이미 완료된 주문은 상태를 변경할 수 없습니다."}, status=400)
 
         if order.order_status != "preparing":
-            return Response({
-                "status": "error",
-                "code": 400,
-                "message": "조리 준비 상태가 아닌 주문은 조리 완료로 변경할 수 없습니다."
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"status": "error", "code": 400, "message": "조리 준비 상태가 아닌 주문은 조리 완료로 변경할 수 없습니다."}, status=400)
 
         order.order_status = "cooked"
         order.save()
@@ -157,21 +194,14 @@ class KitchenOrderCookedView(APIView):
             serializer = OrderSetMenuSerializer(order_set)
             menu_type = "세트"
         else:
-            return Response({
-                "status": "error",
-                "code": 400,
-                "message": "주문에 해당하는 메뉴 정보가 없습니다."
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"status": "error", "code": 400, "message": "주문에 해당하는 메뉴 정보가 없습니다."}, status=400)
 
         data = serializer.data
         data["menu_type"] = menu_type
 
-        return Response({
-            "status": "success",
-            "code": 200,
-            "data": data
-        }, status=status.HTTP_200_OK)
-        
+        return Response({"status": "success", "code": 200, "data": data}, status=200)
+
+
 class ServingOrderCompleteView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -179,18 +209,10 @@ class ServingOrderCompleteView(APIView):
         try:
             order = Order.objects.get(id=order_id)
         except Order.DoesNotExist:
-            return Response({
-                "status": "error",
-                "code": 404,
-                "message": "해당 주문이 존재하지 않습니다."
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({"status": "error", "code": 404, "message": "해당 주문이 존재하지 않습니다."}, status=404)
 
         if order.order_status != "cooked":
-            return Response({
-                "status": "error",
-                "code": 400,
-                "message": "조리 완료 상태가 아닌 주문은 서빙 완료로 변경할 수 없습니다."
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"status": "error", "code": 400, "message": "조리 완료 상태가 아닌 주문은 서빙 완료로 변경할 수 없습니다."}, status=400)
 
         order.order_status = "served"
         order.save()
@@ -205,17 +227,9 @@ class ServingOrderCompleteView(APIView):
             serializer = OrderSetMenuSerializer(order_set)
             menu_type = "세트"
         else:
-            return Response({
-                "status": "error",
-                "code": 400,
-                "message": "주문에 해당하는 메뉴 정보가 없습니다."
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"status": "error", "code": 400, "message": "주문에 해당하는 메뉴 정보가 없습니다."}, status=400)
 
         data = serializer.data
         data["menu_type"] = menu_type
 
-        return Response({
-            "status": "success",
-            "code": 200,
-            "data": data
-        }, status=status.HTTP_200_OK)
+        return Response({"status": "success", "code": 200, "data": data}, status=200)
