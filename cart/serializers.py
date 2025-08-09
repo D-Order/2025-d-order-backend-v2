@@ -26,8 +26,8 @@ class CartSetMenuSerializer(serializers.ModelSerializer):
 class CartDetailSerializer(serializers.ModelSerializer):
     table_num = serializers.IntegerField(source='table.table_num')
     booth_id = serializers.IntegerField(source='table.booth_id')
-    menus = CartMenuSerializer(source='cartmenu_set', many=True)
-    set_menus = CartSetMenuSerializer(source='cartsetmenu_set', many=True)
+    menus = CartMenuSerializer(source='cart_menus', many=True)
+    set_menus = CartSetMenuSerializer(source='cart_set_menus', many=True)
 
     class Meta:
         model = Cart
