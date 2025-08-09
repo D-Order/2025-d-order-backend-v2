@@ -303,3 +303,74 @@ class TableDetailView(APIView):
                 "orders": orders_json
             }
         }, status=200)
+        
+class TableResetAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsManagerUser]
+
+    def post(self, request, table_num):
+        # 1. 인증/인가 체크 (IsManagerUser에서)
+        user = request.user
+        manager = getattr(user, 'manager_profile', None)
+        if not manager:
+            return Response({
+                "status": "fail",
+                "message": "로그인이 필요합니다.",
+                "code": 401,
+                "data": None,
+            }, status=401)
+
+        # 2. booth 연결 확인
+        booth = manager.booth
+        if not booth:
+            return Response({
+                "status": "fail",
+                "message": "운영자에 부스 정보가 연결되어 있지 않습니다.",
+                "code": 401,
+                "data": None,
+            }, status=401)
+
+        # 3. table_num 유효성(>0) 검사
+        try:
+            table_num = int(table_num)
+            if table_num < 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            return Response({
+                "status": "fail",
+                "message": "table_num이 유효하지 않습니다.",
+                "code": 400,
+                "data": None,
+            }, status=400)
+
+        # 4. 해당 booth 내 테이블 존재 검사
+        table = Table.objects.filter(booth=booth, table_num=table_num).first()
+        if not table:
+            return Response({
+                "status": "fail",
+                "message": "존재하지 않는 테이블입니다.",
+                "code": 404,
+                "data": None,
+            }, status=404)
+
+        try:
+            # 5. 상태 out, 활성화 필드 초기화 (주문, 매출에는 영향 X)
+            table.status = "out"
+            table.activated_at = None  # 활성화 구간 초기화(퇴장)
+            table.save(update_fields=['status', 'activated_at'])
+
+            return Response({
+                "status": "success",
+                "message": "테이블이 성공적으로 리셋되었습니다.",
+                "code": 200,
+                "data": {
+                    "table_num": table.table_num,
+                    "table_status": "out"
+                }
+            }, status=200)
+        except Exception:
+            return Response({
+                "status": "error",
+                "message": "서버 내부 오류가 발생했습니다.",
+                "code": 500,
+                "data": None
+            }, status=500)
