@@ -216,25 +216,24 @@ class UsernameCheckView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-# class ManagerQRView(APIView):
+class ManagerQRView(APIView):
+    def get(self, request):
+        manager_id = request.query_params.get('manager_id')
+        if not manager_id:
+            return Response(
+                {"message": "manager_id 쿼리 파라미터가 필요합니다."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-#     def get(self, request):
-#         booth_id = request.query_params.get('booth_id')
-#         if not booth_id:
-#             return Response(
-#                 {"message": "booth_id 쿼리 파라미터가 필요합니다."},
-#                 status=status.HTTP_400_BAD_REQUEST
-#             )
+        manager = get_object_or_404(Manager, user_id=manager_id)
 
-#         booth = get_object_or_404(Booth, id=booth_id)
+        if not manager.table_qr_image:
+            return Response(
+                {"message": "QR 코드가 아직 생성되지 않았습니다."},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
-#         if not booth.qr_code_image:
-#             return Response(
-#                 {"message": "QR 코드가 아직 생성되지 않았습니다."},
-#                 status=status.HTTP_404_NOT_FOUND
-#             )
-
-#         return FileResponse(
-#             booth.qr_code_image.open('rb'),
-#             content_type='image/png'
-#         )
+        return FileResponse(
+            manager.table_qr_image.open('rb'),
+            content_type='image/png'
+        )
