@@ -9,6 +9,7 @@ class MenuSerializer(serializers.ModelSerializer):
     )
     menu_id = serializers.IntegerField(source='id', read_only=True)
     menu_image = serializers.ImageField(required=False, allow_null=True, use_url=True)
+    is_soldout = serializers.SerializerMethodField()
     is_selling = serializers.BooleanField(required=False)
 
     class Meta:
@@ -22,7 +23,8 @@ class MenuSerializer(serializers.ModelSerializer):
             'menu_price',
             'menu_amount',
             'menu_image',
-            'is_selling'
+            'is_selling',
+            'is_soldout'
         ]
         read_only_fields = ['menu_id', 'booth_id']
 
@@ -50,6 +52,10 @@ class MenuSerializer(serializers.ModelSerializer):
     def validate(self, data):
         # booth의 권한 체크는 view에서!
         return data
+    
+    def get_is_soldout(self, obj):
+        # 자동 결정: 재고가 0개 이하일 때 솔드아웃
+        return obj.menu_amount == 0
 
     def to_representation(self, instance):
         """Output 형태를 맞춤"""
@@ -93,6 +99,7 @@ class SetMenuSerializer(serializers.ModelSerializer):
     set_menu_id = serializers.IntegerField(source='id', read_only=True)
     set_image = serializers.ImageField(required=False, allow_null=True, use_url=True)
     origin_price = serializers.SerializerMethodField()
+    is_soldout = serializers.SerializerMethodField()
     menu_items = serializers.ListField(write_only=True, required=False)
 
 
@@ -100,7 +107,7 @@ class SetMenuSerializer(serializers.ModelSerializer):
         model = SetMenu
         fields = [
             'set_menu_id', 'booth_id', 'set_category',
-            'set_name', 'set_description', 'set_price', 'set_image', 'menu_items','origin_price'
+            'set_name', 'set_description', 'set_price', 'set_image', 'menu_items','origin_price', 'is_soldout'
         ]
         read_only_fields = ['set_menu_id', 'booth_id', 'origin_price']
         
@@ -110,6 +117,13 @@ class SetMenuSerializer(serializers.ModelSerializer):
         return sum(
             item.menu.menu_price * item.quantity for item in obj.menu_items.all()
         )
+    
+    def get_is_soldout(self, obj):
+        # 속한 메뉴 중 하나라도 menu_amount==0이면 soldout
+        for item in obj.menu_items.all():
+            if item.menu.menu_amount == 0:
+                return True
+        return False
     
     def validate(self, data):
         booth = self.context.get('booth')
