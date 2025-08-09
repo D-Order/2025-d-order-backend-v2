@@ -1,11 +1,11 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from .serializers import SignupSerializer
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from .serializers import SignupSerializer, ManagerMyPageSerializer
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer,TokenObtainPairSerializer
+from rest_framework.generics import RetrieveUpdateAPIView
 from django.shortcuts import get_object_or_404
 from manager.models import Manager
 from booth.models import Booth, Table
@@ -13,6 +13,8 @@ from django.conf import settings
 import jwt
 from django.http import FileResponse
 from booth.models import Booth
+from django.core.exceptions import PermissionDenied
+
 
 
 class SignupView(APIView):
@@ -121,8 +123,8 @@ class ManagerAuthAPIView(APIView):
             }
         }, status=200)
 
-        res.set_cookie("access", access_token, httponly=True, samesite="Lax", secure=True)
-        res.set_cookie("refresh", refresh_token, httponly=True, samesite="Lax", secure=True)
+        res.set_cookie("access", access_token, httponly=False, samesite="Lax", secure=False)
+        res.set_cookie("refresh", refresh_token, httponly=False, samesite="Lax", secure=False)
         return res
 
     # 토큰 확인 / 재발급
@@ -237,3 +239,30 @@ class ManagerQRView(APIView):
             manager.table_qr_image.open('rb'),
             content_type='image/png'
         )
+class ManagerMyPageView(RetrieveUpdateAPIView):
+    serializer_class = ManagerMyPageSerializer
+
+    
+    def get_object(self):
+        return Manager.objects.get(user=self.request.user)
+
+
+    def get(self, request):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response({
+            "message": "관리자 정보를 불러왔습니다.",
+            "code": 200,
+            "data": serializer.data
+        }, status=200)
+
+    def patch(self, request):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return Response({
+            "message": "관리자 정보가 수정되었습니다.",
+            "code": 200,
+            "data": serializer.data
+        }, status=200)

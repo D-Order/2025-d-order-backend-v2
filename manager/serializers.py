@@ -42,3 +42,69 @@ class SignupSerializer(serializers.Serializer):
         )
 
         return manager
+
+class ManagerMyPageSerializer(serializers.ModelSerializer):
+    booth_name = serializers.CharField(source='booth.name', required=False)
+    seat_tax_person = serializers.IntegerField(required=False, allow_null=True)
+    seat_tax_table = serializers.IntegerField(required=False, allow_null=True)
+
+    class Meta:
+        model = Manager
+        fields = [
+            "user",
+            "booth",
+            "booth_name",
+            "table_num",
+            "order_check_password",
+            "account",
+            "depositor",
+            "bank",
+            "seat_type",
+            "seat_tax_person",
+            "seat_tax_table",
+            "table_limit_hours"
+
+        ]
+        read_only_fields = ["user", "booth", "booth_name"]
+
+    def validate(self, attrs):
+        seat_type = attrs.get("seat_type", getattr(self.instance, "seat_type", None))
+        person = attrs.get("seat_tax_person", getattr(self.instance, "seat_tax_person", None))
+        table = attrs.get("seat_tax_table", getattr(self.instance, "seat_tax_table", None))
+
+        if seat_type == "PP" and person in (None, ''):
+            raise serializers.ValidationError({
+                "message": "seat_type이 'seat tax per person'일 경우 seat_tax_person은 필수입니다.",
+                "code": 400
+            })
+
+        if seat_type == "PT" and table in (None, ''):
+            raise serializers.ValidationError({
+                "message": "seat_type이 'seat tax per table'일 경우 seat_tax_table은 필수입니다.",
+                "code": 400
+            })
+
+        if seat_type == "NO":
+            if person not in (None, '') or table not in (None, ''):
+                raise serializers.ValidationError({
+                    "message": "seat_type이 'no seat tax'일 경우 seat_tax_person, seat_tax_table은 NULL값이어야함.",
+                    "code": 400
+                })
+
+        return attrs
+
+    def update(self, instance, validated_data):
+        # booth 관련 필드 분리
+        booth_data = validated_data.pop('booth', None)
+
+        # booth.name 수정 처리
+        if booth_data and 'name' in booth_data:
+            instance.booth.name = booth_data['name']
+            instance.booth.save()
+
+        # 나머지 Manager 필드 수정
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        return instance
