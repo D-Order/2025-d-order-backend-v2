@@ -6,4 +6,5 @@ urlpatterns = [
     path("manager/signup/", SignupView.as_view(), name="manager-signup"),
     path('manager/check/', UsernameCheckView.as_view()),
     path("manager/qr-download/",ManagerQRView.as_view()),
+    path("manager/mypage/",ManagerMyPageView.as_view()),
 ]
