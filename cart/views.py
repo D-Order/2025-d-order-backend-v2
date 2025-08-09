@@ -7,8 +7,89 @@ from cart.serializers import *
 from booth.models import *
 from menu.models import *
 from manager.models import *
+from order.models import *
+from django.db import models
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+
+SEAT_MENU_CATEGORY = "seat"
+SEAT_FEE_CATEGORY = "seat_fee"
+
+def _get_manager(booth_id: int):
+    return Manager.objects.filter(booth_id=booth_id).first()
+
+def _is_first_session(table: Table, now_dt=None) -> bool:
+    if now_dt is None:
+        now_dt = timezone.now()
+    m = _get_manager(table.booth_id)
+    limit_hours = int(getattr(m, "table_limit_hours", 0) or 0)
+    qs = Order.objects.filter(table_id=table.id)
+    if limit_hours > 0:
+        start = now_dt - timezone.timedelta(hours=limit_hours)
+        qs = qs.filter(created_at__gte=start, created_at__lte=now_dt)
+    return not qs.exists()
+
+def _get_or_create_fee_menu(booth_id: int, seat_mode: str, unit_price: int) -> Menu:
+    name = "테이블 이용료" if seat_mode == "table" else "인당 이용료"
+    fee_menu, _ = Menu.objects.get_or_create(
+        booth_id=booth_id,
+        menu_name=name,
+        defaults={
+            "menu_nick": name,
+            "menu_category": SEAT_FEE_CATEGORY,
+            "menu_price": unit_price,
+            "menu_amount": 10**9,  # 사실상 무제한설정임
+        },
+    )
+    if fee_menu.menu_price != unit_price:
+        fee_menu.menu_price = unit_price
+        fee_menu.save()
+    return fee_menu
+
+def sync_table_fee_cart_item(cart: Cart):
+    table = cart.table
+    booth_id = table.booth_id
+    m = _get_manager(booth_id)
+    if not m:
+        return
+
+    # 세션 첫 주문이 아니면 제거하게끔 설정!!
+    if not _is_first_session(table):
+        CartMenu.objects.filter(cart=cart, menu__menu_category=SEAT_FEE_CATEGORY).delete()
+        return
+
+    if m.seat_type == "PT":
+        unit = int(m.seat_tax_table or 0)
+        if unit <= 0:
+            CartMenu.objects.filter(cart=cart, menu__menu_category=SEAT_FEE_CATEGORY).delete()
+            return
+        fee_menu = _get_or_create_fee_menu(booth_id, "table", unit)
+        cm, created = CartMenu.objects.get_or_create(cart=cart, menu=fee_menu, defaults={"quantity": 1})
+        if not created and cm.quantity != 1:
+            cm.quantity = 1
+            cm.save()
+        return
+
+    if m.seat_type == "PP":
+        unit = int(m.seat_tax_person or 0)
+        if unit <= 0:
+            CartMenu.objects.filter(cart=cart, menu__menu_category=SEAT_FEE_CATEGORY).delete()
+            return
+        people = (
+            CartMenu.objects
+            .filter(cart=cart, menu__menu_category=SEAT_MENU_CATEGORY)
+            .aggregate(total=models.Sum("quantity"))["total"] or 0
+        )
+        if people <= 0:
+            CartMenu.objects.filter(cart=cart, menu__menu_category=SEAT_FEE_CATEGORY).delete()
+            return
+        fee_menu = _get_or_create_fee_menu(booth_id, "person", unit)
+        cm, created = CartMenu.objects.get_or_create(cart=cart, menu=fee_menu, defaults={"quantity": people})
+        if not created and cm.quantity != people:
+            cm.quantity = people
+            cm.save()
+        return
+    CartMenu.objects.filter(cart=cart, menu__menu_category=SEAT_FEE_CATEGORY).delete()
 
 class CartDetailView(APIView):
     def get(self, request):
@@ -39,6 +120,8 @@ class CartDetailView(APIView):
                 "message": "해당 테이블의 활성화된 장바구니가 없습니다."
             }, status=status.HTTP_404_NOT_FOUND)
 
+        sync_table_fee_cart_item(cart)
+
         serializer = CartDetailSerializer(cart)
         return Response({
             "status": "success",
@@ -46,7 +129,8 @@ class CartDetailView(APIView):
             "message": "장바구니 정보를 불러왔습니다.",
             "data": serializer.data
         }, status=status.HTTP_200_OK)
-        
+
+
 class CartAddView(APIView):
     def post(self, request):
         booth_id = request.headers.get("Booth-ID")
@@ -96,6 +180,8 @@ class CartAddView(APIView):
         else:
             return Response({"status": "fail", "message": "type은 menu 또는 set_menu이어야 합니다."}, status=HTTP_400_BAD_REQUEST)
 
+        sync_table_fee_cart_item(cart)
+
         return Response({
             "status": "success",
             "code": HTTP_201_CREATED,
@@ -112,7 +198,8 @@ class CartAddView(APIView):
                 }
             }
         }, status=HTTP_201_CREATED)
-        
+
+
 class CartMenuUpdateView(APIView):
     def patch(self, request, menu_id):
         booth_id = request.headers.get("Booth-ID")
@@ -144,6 +231,7 @@ class CartMenuUpdateView(APIView):
 
             if quantity == 0:
                 cart_item.delete()
+                sync_table_fee_cart_item(cart)
                 return Response({
                     "status": "success",
                     "code": 200,
@@ -156,6 +244,8 @@ class CartMenuUpdateView(APIView):
 
             cart_item.quantity = quantity
             cart_item.save()
+
+            sync_table_fee_cart_item(cart)
 
             return Response({
                 "status": "success",
@@ -183,6 +273,7 @@ class CartMenuUpdateView(APIView):
 
             if quantity == 0:
                 cart_item.delete()
+                sync_table_fee_cart_item(cart)
                 return Response({
                     "status": "success",
                     "code": 200,
@@ -200,6 +291,8 @@ class CartMenuUpdateView(APIView):
 
             cart_item.quantity = quantity
             cart_item.save()
+
+            sync_table_fee_cart_item(cart)
 
             return Response({
                 "status": "success",
@@ -220,7 +313,8 @@ class CartMenuUpdateView(APIView):
 
         else:
             return Response({"status": "fail", "message": "type은 menu 또는 set_menu이어야 합니다."}, status=400)
-        
+
+
 class PaymentInfoView(APIView):
     def get(self, request):
         booth_id = request.headers.get("Booth-ID")
