@@ -211,20 +211,47 @@ class TableOrderListView(APIView):
         booth_id = request.headers.get("Booth-ID")
         if not booth_id:
             return Response({"status": "error", "code": 400, "message": "Booth-ID header is required."}, status=400)
+
         booth = Booth.objects.filter(pk=booth_id).first()
         if not booth:
             return Response({"status": "error", "code": 404, "message": "해당 부스를 찾을 수 없습니다."}, status=404)
-        manager = Manager.objects.filter(booth=booth).first()
-        if not manager:
-            return Response({"status": "error", "code": 404, "message": "해당 부스의 운영자 정보를 찾을 수 없습니다."}, status=404)
-        limit_hours = manager.table_limit_hours or 0
-        now = timezone.now()
-        threshold_time = now - timedelta(hours=limit_hours)
-        valid_orders = Order.objects.filter(table__booth=booth, table__table_num=table_num, created_at__gte=threshold_time)
-        order_menus = OrderMenu.objects.filter(order__in=valid_orders)
-        order_set_menus = OrderSetMenu.objects.filter(order__in=valid_orders)
-        serialized_menus = OrderMenuSerializer(order_menus, many=True).data
-        serialized_set_menus = OrderSetMenuSerializer(order_set_menus, many=True).data
-        combined_orders = serialized_menus + serialized_set_menus
-        combined_orders.sort(key=lambda x: x["created_at"], reverse=False)
-        return Response({"status": "success", "code": 200, "data": {"orders": combined_orders}}, status=200)
+
+        table = Table.objects.filter(booth=booth, table_num=table_num).first()
+        if not table:
+            return Response({"status": "error", "code": 404, "message": "해당 테이블을 찾을 수 없습니다."}, status=404)
+
+        entered_at = getattr(table, "entered_at", None)
+        valid_orders = Order.objects.filter(table=table)
+        if entered_at:
+            valid_orders = valid_orders.filter(created_at__gte=entered_at)
+
+        order_menus = OrderMenu.objects.filter(order__in=valid_orders).select_related("menu", "order")
+        order_set_menus = OrderSetMenu.objects.filter(order__in=valid_orders).select_related("set_menu", "order")
+
+        expanded = []
+
+        for om in order_menus:
+            row = OrderMenuSerializer(om).data
+            row["from_set"] = False
+            if isinstance(row.get("created_at"), timezone.datetime):
+                row["created_at"] = row["created_at"].isoformat()
+            expanded.append(row)
+
+        for osm in order_set_menus:
+            for smi in SetMenuItem.objects.filter(set_menu_id=osm.set_menu_id).select_related("menu"):
+                expanded.append({
+                    "id": None,
+                    "order": osm.order_id,
+                    "menu": smi.menu_id,
+                    "menu_name": smi.menu.menu_name,
+                    "fixed_price": smi.menu.menu_price,
+                    "quantity": smi.quantity * osm.quantity,
+                    "created_at": osm.created_at.isoformat(),
+                    "from_set": True,
+                    "set_id": osm.set_menu_id,
+                    "set_name": osm.set_menu.set_name,
+                })
+
+        expanded.sort(key=lambda x: x["created_at"])
+
+        return Response({"status": "success", "code": 200, "data": {"orders": expanded}}, status=200)

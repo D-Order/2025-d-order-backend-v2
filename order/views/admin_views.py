@@ -107,8 +107,8 @@ class OrderListView(APIView):
         if type_param not in ["kitchen", "serving"]:
             return Response({"status": "error", "code": 400, "message": "type 파라미터는 필수입니다."}, status=400)
 
-        menu_filter = request.GET.get("menu")
-        category_filter = request.GET.get("category")
+        menu_filter = (request.GET.get("menu") or "").strip().lower()
+        category_filter = (request.GET.get("category") or "").strip().lower()
 
         order_query = Order.objects.filter(table__booth_id=booth_id)
         if type_param == "kitchen":
@@ -116,117 +116,54 @@ class OrderListView(APIView):
         elif type_param == "serving":
             order_query = order_query.filter(order_status__in=["cooked", "served"])
 
-        if menu_filter:
-            order_query = order_query.filter(ordermenu__menu__menu_name__icontains=menu_filter)
-        if category_filter:
-            order_query = order_query.filter(ordermenu__menu__menu_category__icontains=category_filter)
-
         order_query = order_query.distinct().order_by("table_id", "created_at")
 
         total_revenue = Booth.objects.get(pk=booth_id).total_revenues
 
-        first_order_by_table = {}
-        for o in order_query:
-            if o.table_id not in first_order_by_table:
-                first_order_by_table[o.table_id] = o.id
+        expanded = []
 
-        orders = []
         for order in order_query:
-            items = []
-            items += OrderMenuSerializer(OrderMenu.objects.filter(order=order), many=True).data
-            items += OrderSetMenuSerializer(OrderSetMenu.objects.filter(order=order), many=True).data
+            for om in OrderMenu.objects.filter(order=order).select_related("menu"):
+                data = OrderMenuSerializer(om).data
+                data["from_set"] = False
+                data["created_at"] = om.created_at.isoformat()
+                data["menu_category"] = getattr(om.menu, "menu_category", None)
+                expanded.append(data)
 
-            if first_order_by_table.get(order.table_id) == order.id:
-                fee, seat_type = get_table_fee_and_type_by_booth(order.table.booth_id)
-                if fee and fee > 0:
-                    items.insert(0, {
+            for osm in OrderSetMenu.objects.filter(order=order).select_related("set_menu"):
+                for smi in SetMenuItem.objects.filter(set_menu_id=osm.set_menu_id).select_related("menu"):
+                    expanded.append({
                         "id": None,
-                        "order": order.id,
-                        "menu_name": "테이블 이용료",
-                        "fixed_price": fee,
-                        "quantity": 1,
-                        "menu_type": "이용료",
-                        "is_table_fee": True,
-                        "seat_type": seat_type,  
-                        "created_at": order.created_at,
+                        "order": osm.order_id,
+                        "menu": smi.menu_id,
+                        "menu_name": smi.menu.menu_name,
+                        "menu_category": getattr(smi.menu, "menu_category", None),
+                        "fixed_price": smi.menu.menu_price,
+                        "quantity": smi.quantity * osm.quantity,
+                        "created_at": osm.created_at.isoformat(),
+                        "from_set": True,
+                        "set_id": osm.set_menu_id,
+                        "set_name": osm.set_menu.set_name,
                     })
 
-            orders.extend(items)
+        if menu_filter or category_filter:
+            def _match(row):
+                ok = True
+                if menu_filter:
+                    ok = ok and (row.get("menu_name") or "").lower().find(menu_filter) >= 0
+                if category_filter:
+                    ok = ok and (row.get("menu_category") or "").lower().find(category_filter) >= 0
+                return ok
+
+            expanded = [row for row in expanded if _match(row)]
+
+        expanded.sort(key=lambda x: x["created_at"])
 
         return Response({
             "status": "success",
             "code": 200,
             "data": {
                 "total_revenue": total_revenue,
-                "orders": orders
+                "orders": expanded
             }
         }, status=200)
-
-
-class KitchenOrderCookedView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, order_id):
-        try:
-            order = Order.objects.get(id=order_id)
-        except Order.DoesNotExist:
-            return Response({"status": "error", "code": 404, "message": "해당 주문이 존재하지 않습니다."}, status=404)
-
-        if order.order_status in ["served", "cancelled"]:
-            return Response({"status": "error", "code": 400, "message": "이미 완료된 주문은 상태를 변경할 수 없습니다."}, status=400)
-
-        if order.order_status != "preparing":
-            return Response({"status": "error", "code": 400, "message": "조리 준비 상태가 아닌 주문은 조리 완료로 변경할 수 없습니다."}, status=400)
-
-        order.order_status = "cooked"
-        order.save()
-
-        order_menu = OrderMenu.objects.filter(order=order).first()
-        order_set = OrderSetMenu.objects.filter(order=order).first()
-
-        if order_menu:
-            serializer = OrderMenuSerializer(order_menu)
-            menu_type = "단일"
-        elif order_set:
-            serializer = OrderSetMenuSerializer(order_set)
-            menu_type = "세트"
-        else:
-            return Response({"status": "error", "code": 400, "message": "주문에 해당하는 메뉴 정보가 없습니다."}, status=400)
-
-        data = serializer.data
-        data["menu_type"] = menu_type
-
-        return Response({"status": "success", "code": 200, "data": data}, status=200)
-
-
-class ServingOrderCompleteView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, order_id):
-        try:
-            order = Order.objects.get(id=order_id)
-        except Order.DoesNotExist:
-            return Response({"status": "error", "code": 404, "message": "해당 주문이 존재하지 않습니다."}, status=404)
-
-        if order.order_status != "cooked":
-            return Response({"status": "error", "code": 400, "message": "조리 완료 상태가 아닌 주문은 서빙 완료로 변경할 수 없습니다."}, status=400)
-
-        order.order_status = "served"
-        order.save()
-
-        order_menu = OrderMenu.objects.filter(order=order).first()
-        order_set = OrderSetMenu.objects.filter(order=order).first()
-
-        if order_menu:
-            serializer = OrderMenuSerializer(order_menu)
-            menu_type = "단일"
-        elif order_set:
-            serializer = OrderSetMenuSerializer(order_set)
-            menu_type = "세트"
-        else:
-            return Response({"status": "error", "code": 400, "message": "주문에 해당하는 메뉴 정보가 없습니다."}, status=400)
-
-        data = serializer.data
-        data["menu_type"] = menu_type
-
-        return Response({"status": "success", "code": 200, "data": data}, status=200)
