@@ -18,7 +18,6 @@ class Menu(models.Model):
     menu_price = models.FloatField()
     menu_amount = models.PositiveIntegerField()
     menu_image = models.ImageField(upload_to='menu_images/', blank=True, null=True)
-    is_selling = models.BooleanField(default=True)
     
     def compress_image(self, image_field_file, image_field_name):
         if not image_field_file:

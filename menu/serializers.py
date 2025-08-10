@@ -10,7 +10,6 @@ class MenuSerializer(serializers.ModelSerializer):
     menu_id = serializers.IntegerField(source='id', read_only=True)
     menu_image = serializers.ImageField(required=False, allow_null=True, use_url=True)
     is_soldout = serializers.SerializerMethodField()
-    is_selling = serializers.BooleanField(required=False)
 
     class Meta:
         model = Menu
@@ -23,7 +22,6 @@ class MenuSerializer(serializers.ModelSerializer):
             'menu_price',
             'menu_amount',
             'menu_image',
-            'is_selling',
             'is_soldout'
         ]
         read_only_fields = ['menu_id', 'booth_id']

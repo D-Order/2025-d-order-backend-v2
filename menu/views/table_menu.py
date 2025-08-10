@@ -39,7 +39,7 @@ class UserBoothMenusViewSet(viewsets.ViewSet):
             table_info = []
 
         category = request.GET.get('category')
-        menus_qs = Menu.objects.filter(booth=booth, is_selling=True)
+        menus_qs = Menu.objects.filter(booth=booth)
         setmenus_qs = SetMenu.objects.filter(booth=booth)
         if category:
             menus_qs = menus_qs.filter(menu_category=category)
