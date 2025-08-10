@@ -19,14 +19,12 @@ def _get_manager(booth_id: int):
     return Manager.objects.filter(booth_id=booth_id).first()
 
 def _is_first_session(table: Table, now_dt=None) -> bool:
-    if now_dt is None:
-        now_dt = timezone.now()
-    m = _get_manager(table.booth_id)
-    limit_hours = int(getattr(m, "table_limit_hours", 0) or 0)
+    entered_at = getattr(table, "entered_at", None)
+
     qs = Order.objects.filter(table_id=table.id)
-    if limit_hours > 0:
-        start = now_dt - timezone.timedelta(hours=limit_hours)
-        qs = qs.filter(created_at__gte=start, created_at__lte=now_dt)
+    if entered_at:
+        qs = qs.filter(created_at__gte=entered_at)
+
     return not qs.exists()
 
 def _get_or_create_fee_menu(booth_id: int, seat_mode: str, unit_price: int) -> Menu:

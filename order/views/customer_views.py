@@ -28,15 +28,16 @@ def get_table_fee_and_type_by_booth(booth_id: int):
 
 
 def is_first_order_for_table_session(table_id: int, booth_id: int, now_dt):
-    m = Manager.objects.filter(booth_id=booth_id).first()
-    limit_hours = int(getattr(m, "table_limit_hours", 0) or 0)
-    qs = Order.objects.filter(table_id=table_id)
-    if limit_hours > 0:
-        window_start = now_dt - timedelta(hours=limit_hours)
-        qs = qs.filter(created_at__gte=window_start, created_at__lte=now_dt)
-    first = qs.order_by("created_at").first()
-    return first is None
+    table = Table.objects.filter(pk=table_id, booth_id=booth_id).first()
+    if not table:
+        return True
 
+    entered_at = getattr(table, "entered_at", None)
+    qs = Order.objects.filter(table_id=table_id)
+    if entered_at:
+        qs = qs.filter(created_at__gte=entered_at)
+
+    return not qs.exists()
 
 class OrderPasswordVerifyView(APIView):
     def post(self, request):
@@ -147,13 +148,6 @@ class OrderPasswordVerifyView(APIView):
                         return Response({"status": "error", "code": 404, "message": "쿠폰을 찾을 수 없습니다."}, status=404)
                     if (coupon.quantity or 0) <= 0:
                         return Response({"status": "error", "code": 400, "message": "해당 쿠폰은 더 이상 사용할 수 없습니다."}, status=400)
-                    limit_hours = int(getattr(manager, "table_limit_hours", 0) or 0)
-                    tc_qs = TableCoupon.objects.filter(table_id=table.id, coupon_id=coupon.id)
-                    if limit_hours > 0:
-                        window_start = now_dt - timedelta(hours=limit_hours)
-                        tc_qs = tc_qs.filter(used_at__gte=window_start, used_at__lte=now_dt)
-                    if tc_qs.exists():
-                        return Response({"status": "error", "code": 400, "message": "해당 세션에서는 이미 이 쿠폰을 사용했습니다."}, status=400)
                     pre_discount_total = subtotal + table_fee
                     dtype = (coupon.discount_type or "").lower()
                     dval = int(coupon.discount_value or 0)
