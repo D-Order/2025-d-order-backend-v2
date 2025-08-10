@@ -23,17 +23,14 @@ def get_table_fee_and_type_by_booth(booth_id: int):
         return int(m.seat_tax_table or 0), "table"
     return 0, "none"
 
-def is_first_order_for_table_session(order: Order):
-    m = Manager.objects.filter(booth_id=order.table.booth_id).first()
-    limit_hours = int(getattr(m, "table_limit_hours", 0) or 0)
-
-    qs = Order.objects.filter(table_id=order.table_id)
-    if limit_hours > 0:
-        window_start = order.created_at - timedelta(hours=limit_hours)
-        qs = qs.filter(created_at__gte=window_start, created_at__lte=order.created_at)
+def is_first_order_for_table_session(order: Order) -> bool:
+    table = order.table
+    entered_at = getattr(table, "entered_at", None)
+    qs = Order.objects.filter(table_id=table.id)
+    if entered_at:
+        qs = qs.filter(created_at__gte=entered_at)
     first = qs.order_by("created_at").first()
     return first and first.id == order.id
-
 
 class OrderCancelView(APIView):
     def patch(self, request, order_id):
