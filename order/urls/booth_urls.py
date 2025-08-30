@@ -4,6 +4,6 @@ from order.views.admin_views import *
 urlpatterns = [
     path("orders/<int:order_id>/", OrderCancelView.as_view(), name="order-cancel"),
     path("orders/", OrderListView.as_view(), name="order-list"),
-    path('kitchen/orders/<int:order_id>/', KitchenOrderCookedView.as_view()),
-    path('serving/orders/<int:order_id>/', ServingOrderCompleteView.as_view()),
+    # path('kitchen/orders/<int:order_id>/', KitchenOrderCookedView.as_view()),
+    # path('serving/orders/<int:order_id>/', ServingOrderCompleteView.as_view()),
 ]
