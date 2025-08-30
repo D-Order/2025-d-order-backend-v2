@@ -20,10 +20,12 @@ from rest_framework_simplejwt.views import TokenRefreshView  # refresh로 access
 
 from django.conf.urls.static import static
 from django.conf import settings
+from .views import index
 
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('', index),
     path('api/v2/',include('manager.urls')),
     path('api/v2/', include('menu.urls')),
     path('api/v2/',include('booth.urls')),
