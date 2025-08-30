@@ -199,9 +199,12 @@ CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
     'http://127.0.0.1:3000',
     'http://127.0.0.1:5173',
-    # 향후 배포 주소 (아래 주석 해제 시)
-    # 'http://frontend.example.com',
-    # 'http://frontend.example.com:포트',
+
+    #백엔드 배포주소
+    "https://d-order.store", 
+    
+    # 프론트 배포 주소 
+
     'http://d-order-admin-v2.netlify.app',
     'http://d-order-customer-v2.netlify.app',
 
