@@ -175,7 +175,7 @@ class ManagerAuthAPIView(APIView):
                         "booth_id": booth.pk
                     }
                 })
-                res.set_cookie("access", new_access, httponly=True, samesite="Lax", secure=True)
+                res.set_cookie("access", new_access, httponly=False, samesite="Lax", secure=False)
                 return res
 
         except jwt.InvalidTokenError:
