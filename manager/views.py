@@ -14,6 +14,7 @@ import jwt
 from django.http import FileResponse
 from booth.models import Booth
 from django.core.exceptions import PermissionDenied
+from rest_framework.permissions import IsAuthenticated
 
 
 
@@ -219,6 +220,7 @@ class UsernameCheckView(APIView):
 
 
 class ManagerQRView(APIView):
+
     def get(self, request):
         manager_id = request.query_params.get('manager_id')
         if not manager_id:
