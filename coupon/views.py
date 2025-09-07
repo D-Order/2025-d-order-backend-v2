@@ -105,7 +105,6 @@ class CouponListCreateView(generics.GenericAPIView):
         )
 
 
-# -------- 단건 조회 & 삭제 --------
 class CouponDetailView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
 
@@ -124,6 +123,8 @@ class CouponDetailView(generics.GenericAPIView):
             )
         return coupon, None
 
+
+    #------- 단건 조회 & 삭제 --------
     def get(self, request, coupon_id):
         coupon, error = self.get_object(request, coupon_id)
         if error:
