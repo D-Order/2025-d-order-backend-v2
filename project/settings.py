@@ -201,6 +201,9 @@ CORS_ALLOWED_ORIGINS = [
 
     #백엔드 배포주소
     "https://d-order.store", 
+    "https://test-d-order.store", 
+    "https://api.test-d-order.store", 
+
     
     # 프론트 배포 주소 
 
