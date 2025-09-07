@@ -4,9 +4,12 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 # 주문 관련 웹소켓
 class OrderConsumer(AsyncWebsocketConsumer):
     async def connect(self):
+        user = self.scope.get("user")
+        if not user or not user.is_authenticated:
+            await self.close()
+            return
 
         self.room_group_name = "orders"
-
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.accept()
 
@@ -17,7 +20,6 @@ class OrderConsumer(AsyncWebsocketConsumer):
         data = json.loads(text_data)
 
         if data.get("type") == "NEW_ORDER":
-
             await self.channel_layer.group_send(
                 self.room_group_name,
                 {
@@ -39,12 +41,15 @@ class OrderConsumer(AsyncWebsocketConsumer):
         }))
 
 
-# 직원 호출 관련 웹소켓
+# 직원 호출 웹소켓
 class CallStaffConsumer(AsyncWebsocketConsumer):
     async def connect(self):
+        user = self.scope.get("user")
+        if not user or not user.is_authenticated:
+            await self.close()
+            return
 
         self.room_group_name = "staff_calls"
-
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.accept()
 
@@ -55,7 +60,6 @@ class CallStaffConsumer(AsyncWebsocketConsumer):
         data = json.loads(text_data)
 
         if data.get("type") == "CALL_STAFF":
-
             await self.channel_layer.group_send(
                 self.room_group_name,
                 {
