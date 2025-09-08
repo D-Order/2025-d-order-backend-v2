@@ -1,12 +1,12 @@
 import jwt
 from channels.middleware import BaseMiddleware
-from channels.db import database_sync_to_async
+from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from urllib.parse import parse_qs
 
 
-@database_sync_to_async
+@sync_to_async
 def get_user_from_token(token):
     try:
 
