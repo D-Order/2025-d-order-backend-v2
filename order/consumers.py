@@ -1,8 +1,6 @@
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-from booth.models import Table
-from manager.models import Manager
 from django.utils import timezone
 from datetime import timedelta
 
@@ -76,6 +74,8 @@ class CallStaffConsumer(AsyncWebsocketConsumer):
 # 테이블 상태 조회 함수
 @database_sync_to_async
 def get_table_statuses(user):
+    from manager.models import Manager
+    from booth.models import Table
 
     try:
         manager = Manager.objects.get(user=user)
@@ -109,6 +109,8 @@ def get_table_statuses(user):
 # 테이블 상태 대시보드 웹소켓
 class TableStatusConsumer(AsyncWebsocketConsumer):
     async def connect(self):
+        from manager.models import Manager
+
         user = self.scope.get("user")
         if not user or not user.is_authenticated:
             await self.close(code=4001)
@@ -129,9 +131,9 @@ class TableStatusConsumer(AsyncWebsocketConsumer):
         await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
     async def receive(self, text_data):
+        user = self.scope.get("user")
         data = json.loads(text_data)
         if data.get("type") == "REFRESH":
-            user = self.scope.get("user")
             table_statuses = await get_table_statuses(user)
             await self.send(text_data=json.dumps({
                 "type": "TABLE_STATUS",
