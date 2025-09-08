@@ -7,6 +7,8 @@ from django.db import transaction
 from django.utils.timezone import now
 from django.utils import timezone
 from datetime import timedelta
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
 from order.models import *
 from menu.models import *
@@ -255,3 +257,32 @@ class TableOrderListView(APIView):
         expanded.sort(key=lambda x: x["created_at"])
 
         return Response({"status": "success", "code": 200, "data": {"orders": expanded}}, status=200)
+
+class CallStaffAPIView(APIView):
+    def post(self, request):
+        table_num = request.data.get("table_num")
+        message = request.data.get("message", "직원 호출")
+
+        if not table_num:
+            return Response(
+                {"message": "table_num 값이 필요합니다."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        table = get_object_or_404(Table, table_num=table_num)
+        channel_layer = get_channel_layer()
+
+        async_to_sync(channel_layer.group_send)(
+            "staff_calls",
+            {
+                "type": "staff_call",
+                "tableNumber": table.table_num,
+                "message": message
+            }
+        )
+
+        return Response({
+            "message": "직원 호출이 전송되었습니다.",
+            "tableNumber": table.table_num,
+            "data": {"message": message}
+        }, status=status.HTTP_200_OK)
