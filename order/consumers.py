@@ -4,7 +4,9 @@ from asgiref.sync import sync_to_async
 from django.utils import timezone
 from datetime import timedelta
 
-@sync_to_async
+
+# ORM → async safe (thread_sensitive=True 로 고정)
+@sync_to_async(thread_sensitive=True)
 def get_manager_by_user(user):
     from manager.models import Manager
     try:
@@ -16,7 +18,7 @@ def get_manager_by_user(user):
         return None
 
 
-@sync_to_async
+@sync_to_async(thread_sensitive=True)
 def get_table_statuses(user):
     from manager.models import Manager
     from booth.models import Table
@@ -25,6 +27,7 @@ def get_table_statuses(user):
     except Manager.DoesNotExist:
         return []
 
+    # list()로 강제 평가해서 lazy query 방지
     tables = list(Table.objects.filter(booth=manager.booth))
     result = []
     for table in tables:
@@ -48,7 +51,7 @@ def get_table_statuses(user):
     return result
 
 
-# 공통 에러 메시지 함수
+# 공통 에러 응답 함수
 async def send_error_and_close(self, code, message):
     await self.accept()
     await self.send(text_data=json.dumps({
