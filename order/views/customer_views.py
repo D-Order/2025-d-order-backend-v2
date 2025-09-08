@@ -280,7 +280,7 @@ class CallStaffAPIView(APIView):
         channel_layer = get_channel_layer()
 
         async_to_sync(channel_layer.group_send)(
-            "staff_calls",
+            f"booth_{booth_id}_staff_calls",
             {
                 "type": "staff_call",
                 "tableNumber": table.table_num,
@@ -291,7 +291,7 @@ class CallStaffAPIView(APIView):
 
         return Response({
             "message": "직원 호출이 전송되었습니다.",
-            "tableNumber": table.table_num,
             "boothId": booth_id,
+            "tableNumber": table.table_num,
             "data": {"message": message}
         }, status=status.HTTP_200_OK)
