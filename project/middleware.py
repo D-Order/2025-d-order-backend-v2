@@ -3,7 +3,6 @@ from channels.middleware import BaseMiddleware
 from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import AnonymousUser
 from urllib.parse import parse_qs
 
 
@@ -22,6 +21,7 @@ def get_user_from_token(token: str):
 
 class JWTAuthMiddleware(BaseMiddleware):
     async def __call__(self, scope, receive, send):
+        from django.contrib.auth.models import AnonymousUser
         query_string = parse_qs(scope["query_string"].decode())
         token = query_string.get("token")
 
