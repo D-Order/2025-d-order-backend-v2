@@ -5,7 +5,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 # ORM → async safe 변경
-@database_sync_to_async
+@sync_to_async
 def get_manager_by_user(user):
     from manager.models import Manager
     try:
@@ -14,7 +14,7 @@ def get_manager_by_user(user):
         return None
 
 
-@database_sync_to_async
+@sync_to_async
 def get_table_statuses(user):
     from manager.models import Manager
     from booth.models import Table
