@@ -9,7 +9,6 @@ try:
     from manager.models import Manager
     from booth.models import Table
 except ImportError as e:
-
     logging.critical(f"Critical: Failed to import models at the top of consumers.py: {e}")
 
 logger = logging.getLogger(__name__)
@@ -19,8 +18,8 @@ logger = logging.getLogger(__name__)
 @sync_to_async(thread_sensitive=True)
 def get_manager_by_user(user):
     try:
-        manager = Manager.objects.get(user=user)
-        logger.debug(f"Found manager: {manager}")
+        manager = Manager.objects.select_related("booth").get(user=user)
+        logger.debug(f"Found manager: {manager.id}")
         return manager
     except Manager.DoesNotExist:
         logger.warning(f"No Manager for user: {user} found.")
@@ -33,7 +32,7 @@ def get_manager_by_user(user):
 @sync_to_async(thread_sensitive=True)
 def get_table_statuses(user):
     try:
-        manager = Manager.objects.get(user=user)
+        manager = Manager.objects.select_related("booth").get(user=user)
     except Manager.DoesNotExist:
         logger.warning(f"No Manager found for user {user} in get_table_statuses. Returning empty list.")
         return []
@@ -43,7 +42,7 @@ def get_table_statuses(user):
 
     try:
         if not hasattr(manager, 'booth') or manager.booth is None:
-            logger.error(f"Manager {manager} has no associated booth when trying to get table statuses.")
+            logger.error(f"Manager {manager.id} has no associated booth when trying to get table statuses.")
             return []
 
         tables = list(Table.objects.filter(booth=manager.booth))
@@ -68,7 +67,7 @@ def get_table_statuses(user):
             })
         return result
     except Exception as e:
-        logger.error(f"Error fetching or processing table statuses for manager {manager}: {e}", exc_info=True)
+        logger.error(f"Error fetching or processing table statuses for manager {manager.id}: {e}", exc_info=True)
         return []
 
 
@@ -76,18 +75,18 @@ async def send_error_and_close(self, code, message):
     valid_close_code = code
     # 웹소켓 표준에 따라 허용되는 종료 코드 범위 내로 조정
     if not (1000 <= code <= 1014 or 3000 <= code <= 4999):
-        valid_close_code = 4000 # 사용자 정의 오류 코드 범위 내의 기본값
+        valid_close_code = 4000  # 사용자 정의 오류 코드 범위 내의 기본값
 
     try:
-        await self.accept() # 연결 수락 시도
+        await self.accept()  # 연결 수락 시도
         logger.info(f"Accepted connection to send error code {code} and message '{message}'.")
         await self.send(text_data=json.dumps({
             "type": "ERROR",
-            "code": code, # 클라이언트에는 원래 코드 전송
+            "code": code,  # 클라이언트에는 원래 코드 전송
             "message": message
         }))
         logger.info(f"Sent error message to client. Closing connection with valid code {valid_close_code}.")
-        await self.close(code=valid_close_code) # 웹소켓 종료 시에는 유효한 코드 사용
+        await self.close(code=valid_close_code)  # 웹소켓 종료 시에는 유효한 코드 사용
     except Exception as e:
         logger.critical(f"Failed to send error message or close connection gracefully: {e}", exc_info=True)
 
@@ -121,18 +120,7 @@ class OrderConsumer(AsyncWebsocketConsumer):
 
         except Exception as e:
             logger.error(f"OrderConsumer: Unexpected error during connection for user {user.id}: {e}", exc_info=True)
-            try:
-                await self.accept()
-                await self.send(text_data=json.dumps({
-                    "type": "ERROR",
-                    "code": 5000,
-                    "message": f"서버 연결 중 예기치 않은 오류 발생: {e.__class__.__name__}"
-                }))
-                await self.close(code=5000)
-                logger.warning(f"OrderConsumer: Attempted to send error and close after an unexpected exception.")
-            except Exception as close_e:
-                logger.critical(f"OrderConsumer: Failed to send error or close connection after critical exception: {close_e}", exc_info=True)
-
+            return await send_error_and_close(self, 5000, f"서버 연결 중 예기치 않은 오류 발생: {e.__class__.__name__}")
 
     async def disconnect(self, close_code):
         logger.info(f"OrderConsumer: Disconnection initiated with code {close_code}.")
@@ -201,18 +189,7 @@ class CallStaffConsumer(AsyncWebsocketConsumer):
 
         except Exception as e:
             logger.error(f"CallStaffConsumer: Unexpected error during connection for user {user.id}: {e}", exc_info=True)
-            try:
-                await self.accept()
-                await self.send(text_data=json.dumps({
-                    "type": "ERROR",
-                    "code": 5000,
-                    "message": f"서버 연결 중 예기치 않은 오류 발생: {e.__class__.__name__}"
-                }))
-                await self.close(code=5000)
-                logger.warning(f"CallStaffConsumer: Attempted to send error and close after an unexpected exception.")
-            except Exception as close_e:
-                logger.critical(f"CallStaffConsumer: Failed to send error or close connection after critical exception: {close_e}", exc_info=True)
-
+            return await send_error_and_close(self, 5000, f"서버 연결 중 예기치 않은 오류 발생: {e.__class__.__name__}")
 
     async def disconnect(self, close_code):
         logger.info(f"CallStaffConsumer: Disconnection initiated with code {close_code}.")
@@ -267,18 +244,7 @@ class TableStatusConsumer(AsyncWebsocketConsumer):
 
         except Exception as e:
             logger.error(f"TableStatusConsumer: Unexpected error during connection for user {user.id}: {e}", exc_info=True)
-            try:
-                await self.accept()
-                await self.send(text_data=json.dumps({
-                    "type": "ERROR",
-                    "code": 5000,
-                    "message": f"서버 연결 중 예기치 않은 오류 발생: {e.__class__.__name__}"
-                }))
-                await self.close(code=5000)
-                logger.warning(f"TableStatusConsumer: Attempted to send error and close after an unexpected exception.")
-            except Exception as close_e:
-                logger.critical(f"TableStatusConsumer: Failed to send error or close connection after critical exception: {close_e}", exc_info=True)
-
+            return await send_error_and_close(self, 5000, f"서버 연결 중 예기치 않은 오류 발생: {e.__class__.__name__}")
 
     async def disconnect(self, close_code):
         logger.info(f"TableStatusConsumer: Disconnection initiated with code {close_code}.")
