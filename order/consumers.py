@@ -145,8 +145,9 @@ class OrderConsumer(AsyncWebsocketConsumer):
 # 직원 호출 웹소켓
 class CallStaffConsumer(AsyncWebsocketConsumer):
     async def connect(self):
-        logger.info("CallStaffConsumer: Connection attempt started.")
+        logger.info(">>> Entering CallStaffConsumer.connect")
         user = self.scope.get("user")
+        logger.debug(f"[CallStaffConsumer] user={user}, authenticated={getattr(user, 'is_authenticated', False)}")
         
         if not user or not user.is_authenticated:
             logger.warning("CallStaffConsumer: Connection rejected. User not authenticated or invalid.")
