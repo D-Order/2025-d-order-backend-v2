@@ -33,10 +33,9 @@ def _get_or_create_fee_menu(booth_id: int, seat_mode: str, unit_price: int) -> M
         booth_id=booth_id,
         menu_name=name,
         defaults={
-            "menu_nick": name,
             "menu_category": SEAT_FEE_CATEGORY,
             "menu_price": unit_price,
-            "menu_amount": 10**9,  # 사실상 무제한설정임
+            "menu_amount": 10**9,  # 사실상 무제한
         },
     )
     if fee_menu.menu_price != unit_price:
