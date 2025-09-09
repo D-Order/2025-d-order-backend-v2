@@ -73,18 +73,22 @@ def get_table_statuses(user):
 
 
 async def send_error_and_close(self, code, message):
+    valid_close_code = code
+    # 웹소켓 표준에 따라 허용되는 종료 코드 범위 내로 조정
+    if not (1000 <= code <= 1014 or 3000 <= code <= 4999):
+        valid_close_code = 4000 # 사용자 정의 오류 코드 범위 내의 기본값
+
     try:
-        await self.accept()
+        await self.accept() # 연결 수락 시도
         logger.info(f"Accepted connection to send error code {code} and message '{message}'.")
         await self.send(text_data=json.dumps({
             "type": "ERROR",
-            "code": code,
+            "code": code, # 클라이언트에는 원래 코드 전송
             "message": message
         }))
-        logger.info(f"Sent error message to client. Closing connection with code {code}.")
-        await self.close(code=code)
+        logger.info(f"Sent error message to client. Closing connection with valid code {valid_close_code}.")
+        await self.close(code=valid_close_code) # 웹소켓 종료 시에는 유효한 코드 사용
     except Exception as e:
-
         logger.critical(f"Failed to send error message or close connection gracefully: {e}", exc_info=True)
 
 
