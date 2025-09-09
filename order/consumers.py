@@ -16,23 +16,23 @@ logger = logging.getLogger(__name__)
 
 # ORM → async safe (thread_sensitive=True 로 고정)
 @sync_to_async(thread_sensitive=True)
-def get_manager_by_user(user):
+def get_manager_and_booth(user):   # [추가] manager + booth를 함께 가져오는 함수
     try:
-        manager = Manager.objects.get(user=user)
-        logger.debug(f"Found manager: {manager}")
-        return manager
+        manager = Manager.objects.select_related("booth").get(user=user)  # booth 미리 로드
+        logger.debug(f"Found manager with booth: {manager}, booth={manager.booth}")
+        return manager, manager.booth
     except Manager.DoesNotExist:
         logger.warning(f"No Manager for user: {user} found.")
-        return None
+        return None, None
     except Exception as e:
-        logger.error(f"Error in get_manager_by_user for user {user}: {e}", exc_info=True)
+        logger.error(f"Error in get_manager_and_booth for user {user}: {e}", exc_info=True)
         raise
 
 
 @sync_to_async(thread_sensitive=True)
 def get_table_statuses(user):
     try:
-        manager = Manager.objects.get(user=user)
+        manager = Manager.objects.select_related("booth").get(user=user)  # [변경] booth 미리 로드
     except Manager.DoesNotExist:
         logger.warning(f"No Manager found for user {user} in get_table_statuses. Returning empty list.")
         return []
@@ -41,7 +41,7 @@ def get_table_statuses(user):
         raise
 
     try:
-        if not hasattr(manager, 'booth') or manager.booth is None:
+        if not manager.booth:   # [변경] booth 속성 안전하게 접근 (이미 select_related로 로드됨)
             logger.error(f"Manager {manager} has no associated booth when trying to get table statuses.")
             return []
 
@@ -82,20 +82,19 @@ class OrderConsumer(AsyncWebsocketConsumer):
             return await self.close(code=4001)
 
         try:
-            manager = await get_manager_by_user(user)
+            manager, booth = await get_manager_and_booth(user)   # [변경] booth까지 안전하게 가져오기
             if not manager:
                 logger.error(f"OrderConsumer: Connection rejected. Manager not found for user {user.id}.")
                 return await self.close(code=4003)
 
-            if not hasattr(manager, 'booth') or manager.booth is None:
+            if not booth:
                 logger.error(f"OrderConsumer: Connection rejected. Manager {manager.id} has no associated booth.")
                 return await self.close(code=4004)
             
-            # 모든 검증을 통과한 후에만 연결 수락
             await self.accept()
-            logger.info(f"OrderConsumer: Connection accepted for booth {manager.booth.id}.")
+            logger.info(f"OrderConsumer: Connection accepted for booth {booth.id}.")
 
-            self.room_group_name = f"booth_{manager.booth.id}_orders"
+            self.room_group_name = f"booth_{booth.id}_orders"
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
             logger.info(f"OrderConsumer: User {user.id} added to channel group '{self.room_group_name}'.")
 
@@ -154,19 +153,19 @@ class CallStaffConsumer(AsyncWebsocketConsumer):
             return await self.close(code=4001)
 
         try:
-            manager = await get_manager_by_user(user)
+            manager, booth = await get_manager_and_booth(user)   # [변경] booth까지 안전하게 가져오기
             if not manager:
                 logger.error(f"CallStaffConsumer: Connection rejected. Manager not found for user {user.id}.")
                 return await self.close(code=4003)
 
-            if not hasattr(manager, 'booth') or manager.booth is None:
+            if not booth:
                 logger.error(f"CallStaffConsumer: Connection rejected. Manager {manager.id} has no associated booth.")
                 return await self.close(code=4004)
 
             await self.accept()
-            logger.info(f"CallStaffConsumer: Connection accepted for booth {manager.booth.id}.")
+            logger.info(f"CallStaffConsumer: Connection accepted for booth {booth.id}.")
             
-            self.room_group_name = f"booth_{manager.booth.id}_staff_calls"
+            self.room_group_name = f"booth_{booth.id}_staff_calls"
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
             logger.info(f"CallStaffConsumer: User {user.id} added to channel group '{self.room_group_name}'.")
 
@@ -203,19 +202,19 @@ class TableStatusConsumer(AsyncWebsocketConsumer):
             return await self.close(code=4001)
 
         try:
-            manager = await get_manager_by_user(user)
+            manager, booth = await get_manager_and_booth(user)   # [변경] booth까지 안전하게 가져오기
             if not manager:
                 logger.error(f"TableStatusConsumer: Connection rejected. Manager not found for user {user.id}.")
                 return await self.close(code=4003)
 
-            if not hasattr(manager, 'booth') or manager.booth is None:
+            if not booth:
                 logger.error(f"TableStatusConsumer: Connection rejected. Manager {manager.id} has no associated booth.")
                 return await self.close(code=4004)
 
             await self.accept()
-            logger.info(f"TableStatusConsumer: Connection accepted for booth {manager.booth.id}.")
+            logger.info(f"TableStatusConsumer: Connection accepted for booth {booth.id}.")
 
-            self.room_group_name = f"booth_{manager.booth.id}_tables"
+            self.room_group_name = f"booth_{booth.id}_tables"
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
             logger.info(f"TableStatusConsumer: User {user.id} added to channel group '{self.room_group_name}'.")
 
@@ -229,7 +228,6 @@ class TableStatusConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             logger.error(f"TableStatusConsumer: Unexpected error during connection for user {user.id}: {e}", exc_info=True)
             return await self.close(code=5000)
-
 
     async def disconnect(self, close_code):
         logger.info(f"TableStatusConsumer: Disconnection initiated with code {close_code}.")
