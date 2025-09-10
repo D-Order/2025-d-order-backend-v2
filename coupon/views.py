@@ -1,11 +1,12 @@
 # coupons/views.py
 from rest_framework import generics, status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from django.db import transaction
 from django.db.models import Exists, OuterRef
 from manager.models import Manager
-from .models import Coupon, CouponCode
+from booth.models import Table
+from .models import Coupon, CouponCode, TableCoupon
 from .serializers import CouponCreateSerializer, CouponListItemSerializer
 from secrets import choice
 import string
@@ -197,3 +198,4 @@ class CouponCodeListView(APIView):
             {"status": "success", "code": 200, "data": data},
             status=status.HTTP_200_OK,
         )
+        

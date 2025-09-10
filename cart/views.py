@@ -8,6 +8,7 @@ from booth.models import *
 from menu.models import *
 from manager.models import *
 from order.models import *
+from coupon.models import *
 from django.db import models
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -330,5 +331,126 @@ class PaymentInfoView(APIView):
                 "bank_name": manager.bank,
                 "account_number": manager.account,
                 "account_holder": manager.depositor
+            }
+        }, status=status.HTTP_200_OK)
+        
+class ApplyCouponView(APIView):
+    permission_classes = []
+    def post(self, request):
+        # 1️⃣ Table-ID 헤더 확인
+        table_id = request.headers.get('Table-ID')
+        if not table_id:
+            return Response({"status": "fail", "code": 400, "message": "Table-ID 헤더가 필요합니다."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        table = Table.objects.filter(id=table_id).first()
+        if not table:
+            return Response({"status": "fail", "code": 404, "message": "테이블을 찾을 수 없습니다."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        # 2️⃣ 현재 활성화된 Cart 가져오기
+        cart = Cart.objects.filter(table=table, is_ordered=False).order_by('-created_at').first()
+        if not cart:
+            return Response({"status": "fail", "code": 404, "message": "활성화된 장바구니가 없습니다."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        # 3️⃣ 요청 Body 파싱
+        serializer = ApplyCouponSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        code = serializer.validated_data['coupon_code'].upper()
+
+        # 4️⃣ 쿠폰 코드 유효성 검사
+        coupon_code = CouponCode.objects.filter(code=code).select_related('coupon').first()
+        if not coupon_code:
+            return Response({"status": "fail", "code": 404, "message": "쿠폰 코드를 찾을 수 없습니다."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        if coupon_code.used_at is not None:
+            return Response({"status": "fail", "code": 400, "message": "이미 사용된 쿠폰 코드입니다."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if coupon_code.issued_to_table and coupon_code.issued_to_table != table:
+            return Response({"status": "fail", "code": 400, "message": "이미 다른 테이블에 적용된 쿠폰입니다."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # 5️⃣ Cart 총합 계산
+        total_price_before = 0
+
+        # 메뉴 금액
+        for cm in CartMenu.objects.filter(cart=cart).select_related('menu'):
+            total_price_before += (cm.menu.menu_price or 0) * cm.quantity
+
+        # 세트메뉴 금액
+        for cs in CartSetMenu.objects.filter(cart=cart).select_related('set_menu'):
+            total_price_before += (cs.set_menu.set_price or 0) * cs.quantity
+
+        # 6️⃣ 할인 계산
+        discount_type = coupon_code.coupon.discount_type.lower()
+        discount_value = coupon_code.coupon.discount_value
+        if discount_type == 'percent':
+            total_price_after = int(total_price_before * (1 - discount_value / 100))
+        else:  # amount
+            total_price_after = max(int(total_price_before - discount_value), 0)
+
+        # 7️⃣ 쿠폰을 현재 테이블에 할당 (예약)
+        coupon_code.issued_to_table = table
+        coupon_code.save(update_fields=['issued_to_table'])
+
+        # TableCoupon 기록(중복 방지)
+        TableCoupon.objects.get_or_create(table=table, coupon=coupon_code.coupon)
+
+        # 8️⃣ 응답 반환
+        return Response({
+            "status": "success",
+            "code": 200,
+            "data": {
+                "coupon_name": coupon_code.coupon.coupon_name,
+                "discount_type": discount_type,
+                "discount_value": discount_value,
+                "total_price_before": total_price_before,
+                "total_price_after": total_price_after
+            }
+        }, status=status.HTTP_200_OK)
+    def delete(self, request):
+        # 1️⃣ Table-ID 헤더 확인
+        table_id = request.headers.get('Table-ID')
+        if not table_id:
+            return Response({"status": "fail", "code": 400, "message": "Table-ID 헤더가 필요합니다."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        table = Table.objects.filter(id=table_id).first()
+        if not table:
+            return Response({"status": "fail", "code": 404, "message": "테이블을 찾을 수 없습니다."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        # 2️⃣ 현재 활성화된 Cart 가져오기
+        cart = Cart.objects.filter(table=table, is_ordered=False).order_by('-created_at').first()
+        if not cart:
+            return Response({"status": "fail", "code": 404, "message": "활성화된 장바구니가 없습니다."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        # 3️⃣ 해당 테이블에 적용된 쿠폰 찾기
+        coupon_codes = CouponCode.objects.filter(issued_to_table=table, used_at__isnull=True)
+        if not coupon_codes.exists():
+            return Response({
+                "status": "fail",
+                "code": 404,
+                "message": "이 테이블에 적용된 쿠폰이 없습니다."
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # 4️⃣ 쿠폰 적용 해제 (예약만 취소)
+        for c in coupon_codes:
+            c.issued_to_table = None
+            c.save(update_fields=['issued_to_table'])
+
+        TableCoupon.objects.filter(table=table, used_at__isnull=True).delete()
+
+        return Response({
+            "status": "success",
+            "code": 200,
+            "message": "쿠폰 적용이 취소되었습니다.",
+            "data": {
+                "table_id": table.id,
+                "table_num": table.table_num
             }
         }, status=status.HTTP_200_OK)
