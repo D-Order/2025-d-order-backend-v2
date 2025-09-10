@@ -4,7 +4,7 @@ from booth.models import Booth, Table
 class Coupon(models.Model):
     booth = models.ForeignKey(Booth, on_delete=models.CASCADE)
     coupon_name = models.CharField(max_length=100)
-    coupon_description = models.CharField(max_length=200)
+    coupon_description = models.CharField(max_length=200, blank=True, null=True)
     discount_type = models.CharField(max_length=20)
     discount_value = models.FloatField()
     quantity = models.IntegerField()
