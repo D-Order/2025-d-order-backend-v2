@@ -42,6 +42,7 @@ def is_first_order_for_table_session(table_id: int, booth_id: int, now_dt):
     return not qs.exists()
 
 class OrderPasswordVerifyView(APIView):
+    permission_classes = []
     def post(self, request):
         booth_id = request.headers.get('Booth-ID')
         password = request.data.get('password')
@@ -318,3 +319,166 @@ class CallStaffAPIView(APIView):
             "tableNumber": table.table_num,
             "data": {"message": message}
         }, status=status.HTTP_200_OK)
+
+
+class OrderCouponConfirmView(APIView):
+    """
+    POST /api/v2/order/coupon/
+    Headers: Table-ID
+    Body: { "order_check_password": "1234" }
+    """
+    def post(self, request):
+        # 1️⃣ Table-ID 헤더
+        table_id = request.headers.get('Table-ID')
+        if not table_id:
+            return Response({"status": "fail", "code": 400, "message": "Table-ID 헤더가 필요합니다."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        table = Table.objects.filter(id=table_id).select_related('booth').first()
+        if not table:
+            return Response({"status": "fail", "code": 404, "message": "테이블을 찾을 수 없습니다."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        booth = table.booth
+        manager = Manager.objects.filter(booth=booth).first()
+        if not manager:
+            return Response({"status": "fail", "code": 404, "message": "해당 부스 운영자 정보를 찾을 수 없습니다."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        # 2️⃣ 요청 바디 검증
+        serializer = OrderCouponConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order_password = serializer.validated_data.get("order_check_password")
+        people_count = serializer.validated_data.get("people_count", 0)
+        now_dt = timezone.now()
+
+        # 3️⃣ 비밀번호 확인 (Manager.order_check_password와 비교)
+        if str(order_password) != str(manager.order_check_password):
+            return Response({"status": "error", "code": 401, "message": "비밀번호가 일치하지 않습니다."}, status=401)
+
+        # 3️⃣ 활성 Cart
+        cart = Cart.objects.filter(table=table, is_ordered=False).first()
+        if not cart:
+            return Response({"status": "error", "code": 404, "message": "주문 가능한 장바구니가 없습니다."}, status=404)
+
+        cart_menus = list(CartMenu.objects.filter(cart=cart))
+        cart_sets = list(CartSetMenu.objects.filter(cart=cart))
+        if not cart_menus and not cart_sets:
+            return Response({"status": "error", "code": 400, "message": "장바구니가 비어 있습니다."}, status=400)
+
+        # 4️⃣ 쿠폰코드 조회 (예약된 것)
+        coupon_code = CouponCode.objects.filter(issued_to_table=table, used_at__isnull=True).select_related('coupon').first()
+        coupon_used = False
+        applied_coupon_code = None
+
+        try:
+            with transaction.atomic():
+                order = Order.objects.create(
+                    table_id=table.id,
+                    order_status="pending",
+                    order_amount=0,
+                )
+
+                subtotal = 0
+                for cm in cart_menus:
+                    menu = get_object_or_404(Menu, pk=cm.menu_id)
+                    if menu.menu_amount < cm.quantity:
+                        raise ValueError(f"'{menu.menu_name}' 재고 부족")
+                    menu.menu_amount -= cm.quantity
+                    menu.save()
+
+                    OrderMenu.objects.create(
+                        order=order,
+                        menu=menu,
+                        quantity=cm.quantity,
+                        fixed_price=menu.menu_price,
+                    )
+                    subtotal += menu.menu_price * cm.quantity
+
+                for cs in cart_sets:
+                    setmenu = get_object_or_404(SetMenu, pk=cs.set_menu_id)
+                    sm_items = SetMenuItem.objects.filter(set_menu_id=setmenu.pk)
+                    for smi in sm_items:
+                        need = smi.quantity * cs.quantity
+                        mobj = get_object_or_404(Menu, pk=smi.menu_id)
+                        if mobj.menu_amount < need:
+                            raise ValueError(f"세트 '{setmenu.set_name}' 구성 '{mobj.menu_name}' 재고 부족")
+                    for smi in sm_items:
+                        need = smi.quantity * cs.quantity
+                        mobj = get_object_or_404(Menu, pk=smi.menu_id)
+                        mobj.menu_amount -= need
+                        mobj.save()
+
+                    OrderSetMenu.objects.create(
+                        order=order,
+                        set_menu=setmenu,
+                        quantity=cs.quantity,
+                        fixed_price=setmenu.set_price,
+                    )
+                    subtotal += setmenu.set_price * cs.quantity
+
+                table_fee = 0
+                if is_first_order_for_table_session(table_id=table.id, booth_id=booth.id, now_dt=now_dt):
+                    base_fee, seat_mode = get_table_fee_and_type_by_booth(booth.id)
+                    if seat_mode == "person":
+                        person_qty = request.data.get("people_count", 0)
+                        table_fee = max(0, int(base_fee)) * int(person_qty)
+                    elif seat_mode == "table":
+                        table_fee = max(0, int(base_fee))
+
+                # 5️⃣ 쿠폰 할인 계산
+                coupon_discount = 0
+                if coupon_code:
+                    applied_coupon_code = coupon_code.code
+                    cpn = coupon_code.coupon
+                    pre_discount_total = subtotal + table_fee
+                    dtype = cpn.discount_type.lower()
+                    dval = cpn.discount_value
+                    if dtype == 'percent':
+                        coupon_discount = int(pre_discount_total * (1 - dval / 100))
+                        coupon_discount = pre_discount_total - coupon_discount
+                    else:  # amount
+                        coupon_discount = min(int(dval), pre_discount_total)
+                    coupon_used = True
+
+                total_price = subtotal + table_fee - coupon_discount
+                if total_price < 0:
+                    total_price = 0
+                order.order_amount = total_price
+                order.save()
+
+                # 6️⃣ 쿠폰 실제 사용 처리
+                if coupon_used and coupon_code:
+                    # 쿠폰코드 사용 완료 처리
+                    coupon_code.used_at = now_dt
+                    coupon_code.issued_to_table = None
+                    coupon_code.save(update_fields=['used_at', 'issued_to_table'])
+                    # 쿠폰 수량 감소
+                    cpn.quantity = (cpn.quantity or 0) - 1
+                    cpn.save(update_fields=['quantity'])
+                    # TableCoupon도 used_at 기록
+                    TableCoupon.objects.filter(table=table, coupon=cpn, used_at__isnull=True).update(used_at=now_dt)
+
+                booth.total_revenues = (booth.total_revenues or 0) + total_price
+                booth.save()
+
+                CartMenu.objects.filter(cart=cart).delete()
+                CartSetMenu.objects.filter(cart=cart).delete()
+                cart.is_ordered = True
+                cart.save()
+
+                return Response({
+                    "status": "success",
+                    "code": 201,
+                    "data": {
+                        "order_id": order.pk,
+                        "total_price": total_price,
+                        "coupon_used": coupon_used,
+                        "coupon_code": applied_coupon_code
+                    }
+                }, status=201)
+
+        except ValueError as e:
+            return Response({"status": "error", "code": 400, "message": str(e)}, status=400)
+        except Exception as e:
+            return Response({"status": "error", "code": 500, "message": "주문 생성 중 오류가 발생했습니다."}, status=500)

@@ -15,3 +15,4 @@ class CouponListItemSerializer(serializers.Serializer):
     discount_value = serializers.FloatField()
     created_at = serializers.DateTimeField()
     is_used = serializers.BooleanField()
+
