@@ -48,7 +48,7 @@ class OrderPasswordVerifyView(APIView):
         password = request.data.get('password')
         table_id = request.data.get('table_id')
         table_num = request.data.get('table_num')
-        coupon_id = request.data.get('coupon_id')
+        # coupon_id = request.data.get('coupon_id')
         now_dt = timezone.now()
 
         if not booth_id or not str(booth_id).isdigit():
@@ -142,43 +142,43 @@ class OrderPasswordVerifyView(APIView):
                     elif seat_mode == "table":
                         table_fee = max(0, int(base_fee))
 
-                coupon_applied = False
-                coupon_discount = 0
-                coupon_info = None
-                if coupon_id is not None:
-                    coupon = Coupon.objects.filter(pk=coupon_id, booth_id=booth.id).first()
-                    if not coupon:
-                        return Response({"status": "error", "code": 404, "message": "쿠폰을 찾을 수 없습니다."}, status=404)
-                    if (coupon.quantity or 0) <= 0:
-                        return Response({"status": "error", "code": 400, "message": "해당 쿠폰은 더 이상 사용할 수 없습니다."}, status=400)
-                    pre_discount_total = subtotal + table_fee
-                    dtype = (coupon.discount_type or "").lower()
-                    dval = int(coupon.discount_value or 0)
-                    if dtype in ("percent", "percentage", "pct"):
-                        pct = max(0, min(100, dval))
-                        coupon_discount = (pre_discount_total * pct) // 100
-                    elif dtype in ("amount", "fixed", "won"):
-                        coupon_discount = max(0, dval)
-                    else:
-                        return Response({"status": "error", "code": 400, "message": "알 수 없는 쿠폰 타입입니다."}, status=400)
-                    coupon_discount = min(coupon_discount, pre_discount_total)
-                    coupon_applied = coupon_discount > 0
-                    coupon_info = {"coupon_id": coupon.id, "coupon_name": coupon.coupon_name}
+                # coupon_applied = False
+                # coupon_discount = 0
+                # coupon_info = None
+                # if coupon_id is not None:
+                #     coupon = Coupon.objects.filter(pk=coupon_id, booth_id=booth.id).first()
+                #     if not coupon:
+                #         return Response({"status": "error", "code": 404, "message": "쿠폰을 찾을 수 없습니다."}, status=404)
+                #     if (coupon.quantity or 0) <= 0:
+                #         return Response({"status": "error", "code": 400, "message": "해당 쿠폰은 더 이상 사용할 수 없습니다."}, status=400)
+                #     pre_discount_total = subtotal + table_fee
+                #     dtype = (coupon.discount_type or "").lower()
+                #     dval = int(coupon.discount_value or 0)
+                #     if dtype in ("percent", "percentage", "pct"):
+                #         pct = max(0, min(100, dval))
+                #         coupon_discount = (pre_discount_total * pct) // 100
+                #     elif dtype in ("amount", "fixed", "won"):
+                #         coupon_discount = max(0, dval)
+                #     else:
+                #         return Response({"status": "error", "code": 400, "message": "알 수 없는 쿠폰 타입입니다."}, status=400)
+                #     coupon_discount = min(coupon_discount, pre_discount_total)
+                #     coupon_applied = coupon_discount > 0
+                #     coupon_info = {"coupon_id": coupon.id, "coupon_name": coupon.coupon_name}
 
-                order_amount = subtotal + table_fee - coupon_discount
+                order_amount = subtotal + table_fee 
                 if order_amount < 0:
                     order_amount = 0
                 order.order_amount = order_amount
                 order.save()
 
-                if coupon_applied:
-                    coupon.quantity = (coupon.quantity or 0) - 1
-                    coupon.save()
-                    TableCoupon.objects.create(
-                        table_id=table.id,
-                        coupon_id=coupon.id,
-                        used_at=now_dt
-                    )
+                # if coupon_applied:
+                #     coupon.quantity = (coupon.quantity or 0) - 1
+                #     coupon.save()
+                #     TableCoupon.objects.create(
+                #         table_id=table.id,
+                #         coupon_id=coupon.id,
+                #         used_at=now_dt
+                #     )
 
                 booth.total_revenues = (booth.total_revenues or 0) + order_amount
                 booth.save()
@@ -220,16 +220,22 @@ class OrderPasswordVerifyView(APIView):
                         "order_amount": order.order_amount,
                         "subtotal": subtotal,
                         "table_fee": table_fee,
-                        "coupon_discount": coupon_discount,
-                        "coupon": coupon_info,
+                        # "coupon_discount": coupon_discount,
+                        # "coupon": coupon_info,
                         "booth_total_revenues": booth.total_revenues
                     }
                 }, status=201)
 
         except ValueError as e:
             return Response({"status": "error", "code": 400, "message": str(e)}, status=400)
-        except Exception:
-            return Response({"status": "error", "code": 500, "message": "주문 생성 중 오류가 발생했습니다."}, status=500)
+        except Exception as e:
+            import traceback
+            print("🚨 OrderPasswordVerifyView Exception:", e)
+            traceback.print_exc()
+            return Response(
+                {"status": "error", "code": 500, "message": str(e)},
+                status=500
+            )
 
 
 class TableOrderListView(APIView):
@@ -418,13 +424,13 @@ class OrderCouponConfirmView(APIView):
                     subtotal += setmenu.set_price * cs.quantity
 
                 table_fee = 0
-                if is_first_order_for_table_session(table_id=table.id, booth_id=booth.id, now_dt=now_dt):
-                    base_fee, seat_mode = get_table_fee_and_type_by_booth(booth.id)
-                    if seat_mode == "person":
-                        person_qty = request.data.get("people_count", 0)
-                        table_fee = max(0, int(base_fee)) * int(person_qty)
-                    elif seat_mode == "table":
-                        table_fee = max(0, int(base_fee))
+                # if is_first_order_for_table_session(table_id=table.id, booth_id=booth.id, now_dt=now_dt):
+                #     base_fee, seat_mode = get_table_fee_and_type_by_booth(booth.id)
+                #     if seat_mode == "person":
+                #         person_qty = request.data.get("people_count", 0)
+                #         table_fee = max(0, int(base_fee)) * int(person_qty)
+                #     elif seat_mode == "table":
+                #         table_fee = max(0, int(base_fee))
 
                 # 5️⃣ 쿠폰 할인 계산
                 coupon_discount = 0
