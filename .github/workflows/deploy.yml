@@ -5,6 +5,7 @@ on:
     branches:
       - main
 
+## 환경 변수 설정  
 env:
   BRANCH: main        
   PROJECT_DIR: /home/ubuntu/2025-d-order-backend-v2  
