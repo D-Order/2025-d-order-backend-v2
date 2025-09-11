@@ -1,0 +1,77 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  BRANCH: main        
+  PROJECT_DIR: /home/ubuntu/2025-d-order-backend-v2  
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # .env 파일 생성 (Kakao + S3 키까지 추가했음 +9.22 EMAIL 추가)
+      - name: Create .env for CI
+        run: |
+          echo "SECRET_KEY=${{ secrets.SECRET_KEY }}" > .env
+          echo "DEBUG=${{ secrets.DEBUG || 'False' }}" >> .env
+          echo "DB_NAME=${{ secrets.DB_NAME }}" >> .env
+          echo "DB_USER=${{ secrets.DB_USER }}" >> .env
+          echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
+          echo "DB_HOST=${{ secrets.DB_HOST }}" >> .env
+          echo "DB_PORT=${{ secrets.DB_PORT }}" >> .env
+          
+      - name: Install dependencies
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          pip install -r requirements.txt
+
+      - name: Django system check
+        run: |
+          source venv/bin/activate
+          python manage.py check
+
+      - name: Check for unapplied model changes
+        run: |
+          source venv/bin/activate
+          python manage.py makemigrations --check --dry-run
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2 via SSH (zero-downtime reload)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            PROJECT_DIR=/home/ubuntu/2025-d-order-backend-v2 
+            cd $PROJECT_DIR
+            git fetch --all
+            git reset --hard origin/main
+            source venv/bin/activate
+            pip install -U pip
+            pip install -r requirements.txt
+            python manage.py migrate --noinput || true
+            python manage.py collectstatic --noinput || true
+            sudo systemctl reload gunicorn
+            sudo systemctl status gunicorn --no-pager || true
