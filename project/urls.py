@@ -32,6 +32,7 @@ urlpatterns = [
     path('api/v2/booth/', include('order.urls.booth_urls')),  # 운영자용
     path('api/v2/tables/', include('order.urls.table_urls')), # 손님용
     path('api/v2/cart/', include('cart.urls')),
+    path('api/v2/coupons/', include('coupon.urls')),
 
     #access 토근 재발급용 API
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),

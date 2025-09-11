@@ -8,4 +8,5 @@ urlpatterns = [
     path('booth/tables/', TableListView.as_view(), name='table-list'),
     path('booth/tables/<int:table_num>/', TableDetailView.as_view()),
     path('booth/tables/<int:table_num>/reset/', TableResetAPIView.as_view(), name='table-reset'),
+
 ]
