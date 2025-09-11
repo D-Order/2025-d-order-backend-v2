@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
 from pathlib import Path
+from corsheaders.defaults import default_headers
 import os
 import environ
 
@@ -235,6 +236,10 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    "booth-id",
+]
 
 CORS_ALLOW_ALL_ORIGINS = False      # 👉 보안상 좋은 설정 (허용된 곳만)
 CORS_ALLOW_CREDENTIALS = True       # 👉 로그인 세션 등 쿠키 포함 요청 허용
