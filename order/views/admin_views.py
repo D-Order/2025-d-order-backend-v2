@@ -171,3 +171,136 @@ class OrderListView(APIView):
             }
         }, status=200)
         
+class KitchenOrderCookedView(APIView):
+    """
+    POST /api/v2/kitchen/orders/<order_id>/
+    조리 상태의 주문을 조리 완료(cooked) 상태로 변경
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, order_id):
+        order = get_object_or_404(Order, pk=order_id)
+
+        if order.order_status not in ["pending", "accepted", "preparing"]:
+            return Response({
+                "status": "error",
+                "code": 400,
+                "message": "이미 완료되었거나 취소된 주문은 조리 완료할 수 없습니다."
+            }, status=400)
+
+        order.order_status = "cooked"
+        order.save(update_fields=["order_status"])
+
+        # 대표 메뉴 하나만 반환
+        order_menu = OrderMenu.objects.filter(order=order).select_related("menu").first()
+        order_setmenu = OrderSetMenu.objects.filter(order=order).select_related("set_menu").first()
+
+        if order_menu:
+            data = {
+                "id": order.id,
+                "menu_name": order_menu.menu.menu_name,
+                "menu_price": order_menu.menu.menu_price,
+                "fixed_price": order_menu.fixed_price,
+                "menu_num": order_menu.quantity,
+                "order_status": order.order_status,
+                "created_at": order.created_at.isoformat(),
+                "table_num": order.table.table_num,
+                "menu_image": order_menu.menu.menu_image.url if order_menu.menu.menu_image else None
+            }
+        elif order_setmenu:
+            data = {
+                "id": order.id,
+                "menu_name": order_setmenu.set_menu.set_name,
+                "menu_price": order_setmenu.set_menu.set_price,
+                "fixed_price": order_setmenu.fixed_price,
+                "menu_num": order_setmenu.quantity,
+                "order_status": order.order_status,
+                "created_at": order.created_at.isoformat(),
+                "table_num": order.table.table_num,
+                "menu_image": order_setmenu.set_menu.set_image.url if order_setmenu.set_menu.set_image else None
+            }
+        else:
+            data = {
+                "id": order.id,
+                "menu_name": None,
+                "menu_price": 0,
+                "fixed_price": 0,
+                "menu_num": 0,
+                "order_status": order.order_status,
+                "created_at": order.created_at.isoformat(),
+                "table_num": order.table.table_num,
+                "menu_image": None
+            }
+
+        return Response({
+            "status": "success",
+            "code": 200,
+            "data": data
+        }, status=200)
+
+
+class ServingOrderCompleteView(APIView):
+    """
+    POST /api/v2/serving/orders/<order_id>/
+    조리 완료된 주문을 서빙 완료(served) 상태로 변경
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, order_id):
+        order = get_object_or_404(Order, pk=order_id)
+
+        if order.order_status != "cooked":
+            return Response({
+                "status": "error",
+                "code": 400,
+                "message": "조리 완료 상태가 아닌 주문은 서빙 완료할 수 없습니다."
+            }, status=400)
+
+        order.order_status = "served"
+        order.save(update_fields=["order_status"])
+
+        order_menu = OrderMenu.objects.filter(order=order).select_related("menu").first()
+        order_setmenu = OrderSetMenu.objects.filter(order=order).select_related("set_menu").first()
+
+        if order_menu:
+            data = {
+                "id": order.id,
+                "menu_name": order_menu.menu.menu_name,
+                "menu_price": order_menu.menu.menu_price,
+                "fixed_price": order_menu.fixed_price,
+                "menu_num": order_menu.quantity,
+                "order_status": order.order_status,
+                "created_at": order.created_at.isoformat(),
+                "table_num": order.table.table_num,
+                "menu_image": order_menu.menu.menu_image.url if order_menu.menu.menu_image else None
+            }
+        elif order_setmenu:
+            data = {
+                "id": order.id,
+                "menu_name": order_setmenu.set_menu.set_name,
+                "menu_price": order_setmenu.set_menu.set_price,
+                "fixed_price": order_setmenu.fixed_price,
+                "menu_num": order_setmenu.quantity,
+                "order_status": order.order_status,
+                "created_at": order.created_at.isoformat(),
+                "table_num": order.table.table_num,
+                "menu_image": order_setmenu.set_menu.set_image.url if order_setmenu.set_menu.set_image else None
+            }
+        else:
+            data = {
+                "id": order.id,
+                "menu_name": None,
+                "menu_price": 0,
+                "fixed_price": 0,
+                "menu_num": 0,
+                "order_status": order.order_status,
+                "created_at": order.created_at.isoformat(),
+                "table_num": order.table.table_num,
+                "menu_image": None
+            }
+
+        return Response({
+            "status": "success",
+            "code": 200,
+            "data": data
+        }, status=200)
