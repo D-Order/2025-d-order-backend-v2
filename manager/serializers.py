@@ -44,7 +44,7 @@ class SignupSerializer(serializers.Serializer):
         return manager
 
 class ManagerMyPageSerializer(serializers.ModelSerializer):
-    booth_name = serializers.CharField(source='booth.name', required=False)
+    booth_name = serializers.CharField(source='booth.booth_name', required=False)
     seat_tax_person = serializers.IntegerField(required=False, allow_null=True)
     seat_tax_table = serializers.IntegerField(required=False, allow_null=True)
 
