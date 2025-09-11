@@ -147,21 +147,7 @@ class MenuViewSet(viewsets.ModelViewSet):
                 {"status": 404, "message": "해당 메뉴를 찾을 수 없습니다.", "data": None},
                 status=404)
 
-        # 4. 연관 데이터 검사(주문,  세트 메뉴 등)
-        is_related = (
-            OrderMenu.objects.filter(menu_id=menu_id).exists() or
-            SetMenuItem.objects.filter(menu_id=menu_id).exists()
-        )
-        if is_related:
-            return Response(
-                {
-                    "status": 409,
-                    "message": "해당 메뉴는 이미 주문 또는 세트메뉴, 카트에 사용되어 삭제할 수 없습니다.",
-                    "data": None
-                },
-                status=409
-            )
-        # 5. 삭제 실행
+        # 4. 삭제 실행
         menu.delete()
         return Response(
             {"status": 204, "message": "요청이 정상적으로 처리되었습니다.", "data": None},
@@ -233,7 +219,6 @@ class SetMenuViewSet(viewsets.ModelViewSet):
         except SetMenu.DoesNotExist:
             return Response({"status":404, "message":"존재하지 않는 세트메뉴입니다.", "data":None}, status=404)
 
-        # 실제 주문/카트 연동이 있다면 이 부분에서 삭제 불가 체크!
         setmenu.delete()
         return Response({"status":204, "message":"삭제 완료.", "data":None}, status=204)
     
