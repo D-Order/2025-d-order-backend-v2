@@ -21,23 +21,23 @@ def get_statistics(booth_id: int):
     # 방문자 수 (seat_type 별 처리)
     if manager.seat_type == "PP":
         visitors = (
-            OrderMenu.objects.filter(order__table__booth=booth, menu__menu__menu_category="seat")
+            OrderMenu.objects.filter(order__table__booth=booth, menu__menu_category="seat")
             .aggregate(total=Sum("quantity"))["total"] or 0
         )
         recent_visitors = (
             OrderMenu.objects.filter(
                 order__table__booth=booth,
-                menu__menu__menu_category="seat",
+                menu__menu_category="seat",
                 order__created_at__gte=now - timezone.timedelta(hours=1),
             ).aggregate(total=Sum("quantity"))["total"] or 0
         )
     elif manager.seat_type == "PT":
         visitors = OrderMenu.objects.filter(
-            order__table__booth=booth, menu__menu__menu_category="seat_fee"
+            order__table__booth=booth, menu__menu_category="seat_fee"
         ).count()
         recent_visitors = OrderMenu.objects.filter(
             order__table__booth=booth,
-            menu__menu__menu_category="seat_fee",
+            menu__menu_category="seat_fee",
             order__created_at__gte=now - timezone.timedelta(hours=1),
         ).count()
     else:
