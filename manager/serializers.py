@@ -65,7 +65,7 @@ class ManagerMyPageSerializer(serializers.ModelSerializer):
             "table_limit_hours"
 
         ]
-        read_only_fields = ["user", "booth", "booth_name"]
+        read_only_fields = ["user", "booth"]
 
     def validate(self, attrs):
         seat_type = attrs.get("seat_type", getattr(self.instance, "seat_type", None))
@@ -98,8 +98,8 @@ class ManagerMyPageSerializer(serializers.ModelSerializer):
         booth_data = validated_data.pop('booth', None)
 
         # booth.name 수정 처리
-        if booth_data and 'name' in booth_data:
-            instance.booth.name = booth_data['name']
+        if booth_data and 'booth_name' in booth_data:
+            instance.booth.booth_name = booth_data['booth_name']
             instance.booth.save()
 
         # 나머지 Manager 필드 수정
