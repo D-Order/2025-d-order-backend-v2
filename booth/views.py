@@ -2,11 +2,13 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from booth.models import Booth, Table
 from django.utils import timezone
+from datetime import timedelta
 from order.models import *
 from django.db.models import Sum, F
 from rest_framework import viewsets, status, permissions
 from rest_framework.permissions import IsAuthenticated
 from booth.serializers import *
+from manager.models import Manager
 
 class IsManagerUser(permissions.BasePermission):
     """로그인한 사용자가 Manager와 연결되어 있는지 확인"""
@@ -89,7 +91,7 @@ class BoothRevenuesAPIView(APIView):
                 "total_revenue": total_revenue
             }
         }, status=200)
-        
+
 class TableEnterAPIView(APIView):
     authentication_classes = []  # 로그인 필요 없음
     permission_classes = []      # 누구나 가능
@@ -116,6 +118,7 @@ class TableEnterAPIView(APIView):
         try:
             booth = Booth.objects.get(pk=booth_id)
             table = Table.objects.get(booth=booth, table_num=table_num)
+            manager = Manager.objects.get(booth=booth)  # ✅ table_limit_hours 계산용
         except Booth.DoesNotExist:
             return Response({
                 "status": "fail",
@@ -127,6 +130,13 @@ class TableEnterAPIView(APIView):
             return Response({
                 "status": "fail",
                 "message": "존재하지 않는 테이블입니다.",
+                "code": 404,
+                "data": None
+            }, status=404)
+        except Manager.DoesNotExist:
+            return Response({
+                "status": "fail",
+                "message": "해당 부스에 연결된 운영자 정보가 없습니다.",
                 "code": 404,
                 "data": None
             }, status=404)
@@ -151,6 +161,40 @@ class TableEnterAPIView(APIView):
         table.activated_at = timezone.now()
         table.save(update_fields=["status", "activated_at"])
 
+        # 5. 남은 시간 / 만료 여부 계산
+        remaining_minutes, is_expired = None, False
+        if table.activated_at:
+            elapsed = timezone.now() - table.activated_at
+            limit_hours = manager.table_limit_hours or 0
+            limit = timedelta(hours=limit_hours)
+            remaining_minutes = max(0, int((limit - elapsed).total_seconds() // 60))
+            if elapsed > limit:
+                is_expired = True
+
+        # 6. 웹소켓 그룹으로 상태 갱신 이벤트 push
+        try:
+            from asgiref.sync import async_to_sync
+            from channels.layers import get_channel_layer
+            channel_layer = get_channel_layer()
+
+            async_to_sync(channel_layer.group_send)(
+                f"booth_{booth.id}_tables",
+                {
+                    "type": "table_status_update",
+                    "data": {
+                        "tableNumber": table.table_num,
+                        "status": table.status,
+                        "activatedAt": table.activated_at.isoformat(),
+                        "remainingMinutes": remaining_minutes,
+                        "expired": is_expired
+                    }
+                }
+            )
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to push table_status_update via WebSocket: {e}", exc_info=True)
+
         return Response({
             "status": "success",
             "message": "입장 성공! 테이블 활성화.",
@@ -161,6 +205,8 @@ class TableEnterAPIView(APIView):
                 "booth_id": booth.id,
                 "booth_name": booth.booth_name,
                 "table_status": table.status,
+                "remainingMinutes": remaining_minutes,
+                "expired": is_expired
             }
         }, status=200)
         

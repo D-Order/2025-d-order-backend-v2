@@ -34,7 +34,7 @@ def get_manager_and_booth(user):   # [추가] manager + booth를 함께 가져�
 @sync_to_async(thread_sensitive=True)
 def get_table_statuses(user):
     try:
-        manager = Manager.objects.select_related("booth").get(user=user)  # [변경] booth 미리 로드
+        manager = Manager.objects.select_related("booth").get(user=user)
     except Manager.DoesNotExist:
         logger.warning(f"No Manager found for user {user} in get_table_statuses. Returning empty list.")
         return []
@@ -43,19 +43,19 @@ def get_table_statuses(user):
         raise
 
     try:
-        if not manager.booth:   # [변경] booth 속성 안전하게 접근 (이미 select_related로 로드됨)
+        if not manager.booth:
             logger.error(f"Manager {manager} has no associated booth when trying to get table statuses.")
             return []
 
         tables = list(Table.objects.filter(booth=manager.booth))
         result = []
         for table in tables:
-            remaining_minutes = None
-            is_expired = False
+            remaining_minutes, is_expired = None, False
 
             if table.activated_at:
                 elapsed = timezone.now() - table.activated_at
-                limit = timedelta(hours=manager.table_limit_hours)
+                limit_hours = manager.table_limit_hours or 0
+                limit = timedelta(hours=limit_hours)
                 remaining_minutes = max(0, int((limit - elapsed).total_seconds() // 60))
                 if elapsed > limit:
                     is_expired = True
@@ -184,7 +184,7 @@ class TableStatusConsumer(AsyncWebsocketConsumer):
             return await self.close(code=4001)
 
         try:
-            manager, booth = await get_manager_and_booth(user)   # [변경] booth까지 안전하게 가져오기
+            manager, booth = await get_manager_and_booth(user)
             if not manager:
                 logger.error(f"TableStatusConsumer: Connection rejected. Manager not found for user {user.id}.")
                 return await self.close(code=4003)
@@ -200,8 +200,8 @@ class TableStatusConsumer(AsyncWebsocketConsumer):
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
             logger.info(f"TableStatusConsumer: User {user.id} added to channel group '{self.room_group_name}'.")
 
+            # 최초 접속 시 테이블 상태 내려주기
             table_statuses = await get_table_statuses(user)
-            logger.debug(f"TableStatusConsumer: Sending initial table statuses ({len(table_statuses)} tables).")
             await self.send(text_data=json.dumps({
                 "type": "TABLE_STATUS",
                 "data": table_statuses
@@ -216,8 +216,6 @@ class TableStatusConsumer(AsyncWebsocketConsumer):
         if hasattr(self, 'room_group_name') and self.channel_layer:
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
             logger.info(f"TableStatusConsumer: User removed from channel group '{self.room_group_name}'.")
-        else:
-            logger.warning("TableStatusConsumer: room_group_name or channel_layer not defined during disconnect. Clean-up skipped.")
 
     async def receive(self, text_data):
         logger.debug(f"TableStatusConsumer: Received raw data: {text_data}")
@@ -226,7 +224,6 @@ class TableStatusConsumer(AsyncWebsocketConsumer):
             if data.get("type") == "REFRESH":
                 user = self.scope.get("user")
                 if not user or not user.is_authenticated:
-                    logger.warning("TableStatusConsumer: REFRESH request from unauthenticated user. Rejecting.")
                     await self.send(text_data=json.dumps({
                         "type": "ERROR",
                         "code": 4001,
@@ -235,7 +232,6 @@ class TableStatusConsumer(AsyncWebsocketConsumer):
                     return
 
                 table_statuses = await get_table_statuses(user)
-                logger.debug(f"TableStatusConsumer: Sending refreshed table statuses ({len(table_statuses)} tables).")
                 await self.send(text_data=json.dumps({
                     "type": "TABLE_STATUS",
                     "data": table_statuses
@@ -243,6 +239,13 @@ class TableStatusConsumer(AsyncWebsocketConsumer):
             else:
                 logger.warning(f"TableStatusConsumer: Unknown message type received: '{data.get('type') or 'N/A'}'")
         except json.JSONDecodeError:
-            logger.error(f"TableStatusConsumer: Failed to decode JSON from received data: '{text_data}'", exc_info=True)
+            logger.error(f"TableStatusConsumer: Failed to decode JSON: '{text_data}'", exc_info=True)
         except Exception as e:
             logger.error(f"TableStatusConsumer: Error during receive processing: {e}", exc_info=True)
+
+    # 새로 추가된 핸들러
+    async def table_status_update(self, event):
+        await self.send(text_data=json.dumps({
+            "type": "TABLE_STATUS_UPDATE",
+            "data": event["data"]
+        }))
