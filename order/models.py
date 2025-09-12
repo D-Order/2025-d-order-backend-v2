@@ -19,6 +19,7 @@ class Order(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    served_at = models.DateTimeField(null=True, blank=True)  # 서빙 완료 시점
 
     def __str__(self):
         return f"Order #{self.pk} - Table {self.table.table_num}"

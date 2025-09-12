@@ -92,6 +92,9 @@ class OrderCancelView(APIView):
                 booth = Booth.objects.get(pk=order.table.booth_id)
                 booth.total_revenues = max(0, (booth.total_revenues or 0) - refund_price)
                 booth.save()
+                
+                from statistic.utils import push_statistics
+                push_statistics(booth.id)
 
         except ValueError as e:
             return Response({"status": "error", "code": 400, "message": str(e)}, status=400)

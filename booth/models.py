@@ -13,6 +13,7 @@ class Table(models.Model):
     table_num = models.IntegerField()
     status = models.CharField(max_length=16, default='out')  # 'inactive', 'activate' 등
     activated_at = models.DateTimeField(null=True, blank=True)
+    deactivated_at = models.DateTimeField(null=True, blank=True)  # 테이블 초기화 시점
     
     def __str__(self):
         return f"[{self.booth.booth_name}] - Table #{self.table_num}"
