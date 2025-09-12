@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     'order',
     'cart',
     'coupon',
+    'statistic',
 
     #drf
     'rest_framework',

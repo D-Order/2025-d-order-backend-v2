@@ -1,9 +1,11 @@
 import json
+import logging
 from channels.generic.websocket import AsyncWebsocketConsumer
 from asgiref.sync import sync_to_async
 from django.utils import timezone
 from datetime import timedelta
-import logging
+from statistic.utils import push_statistics
+from manager.models import Manager
 
 try:
     from manager.models import Manager
@@ -76,69 +78,49 @@ class OrderConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         logger.info("OrderConsumer: Connection attempt started.")
         user = self.scope.get("user")
-        
+
         if not user or not user.is_authenticated:
-            logger.warning("OrderConsumer: Connection rejected. User not authenticated or invalid.")
             return await self.close(code=4001)
 
         try:
-            manager, booth = await get_manager_and_booth(user)   # [변경] booth까지 안전하게 가져오기
-            if not manager:
-                logger.error(f"OrderConsumer: Connection rejected. Manager not found for user {user.id}.")
+            self.manager, self.booth = await get_manager_and_booth(user)  # ✅ booth 저장
+            if not self.manager or not self.booth:
                 return await self.close(code=4003)
 
-            if not booth:
-                logger.error(f"OrderConsumer: Connection rejected. Manager {manager.id} has no associated booth.")
-                return await self.close(code=4004)
-            
-            await self.accept()
-            logger.info(f"OrderConsumer: Connection accepted for booth {booth.id}.")
-
-            self.room_group_name = f"booth_{booth.id}_orders"
+            self.room_group_name = f"booth_{self.booth.id}_orders"
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
-            logger.info(f"OrderConsumer: User {user.id} added to channel group '{self.room_group_name}'.")
+            await self.accept()
 
+            logger.info(f"OrderConsumer: Connected for booth {self.booth.id}")
         except Exception as e:
-            logger.error(f"OrderConsumer: Unexpected error during connection for user {user.id}: {e}", exc_info=True)
+            logger.error(f"OrderConsumer connect error: {e}", exc_info=True)
             return await self.close(code=5000)
 
     async def disconnect(self, close_code):
-        logger.info(f"OrderConsumer: Disconnection initiated with code {close_code}.")
-        if hasattr(self, 'room_group_name') and self.channel_layer:
+        if hasattr(self, "room_group_name"):
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
-            logger.info(f"OrderConsumer: User removed from channel group '{self.room_group_name}'.")
-        else:
-            logger.warning("OrderConsumer: room_group_name or channel_layer not defined during disconnect. Clean-up skipped.")
 
     async def receive(self, text_data):
-        logger.debug(f"OrderConsumer: Received raw data: {text_data}")
         try:
             data = json.loads(text_data)
             if data.get("type") == "NEW_ORDER":
-                if hasattr(self, 'room_group_name') and self.channel_layer:
-                    await self.channel_layer.group_send(
-                        self.room_group_name,
-                        {
-                            "type": "new_order",
-                            "data": data["data"]
-                        }
-                    )
-                    logger.debug(f"OrderConsumer: Sent NEW_ORDER to group '{self.room_group_name}'.")
-                else:
-                    logger.error("OrderConsumer: room_group_name or channel_layer not available to send NEW_ORDER.")
-            else:
-                logger.warning(f"OrderConsumer: Unknown message type received: '{data.get('type') or 'N/A'}'")
-        except json.JSONDecodeError:
-            logger.error(f"OrderConsumer: Failed to decode JSON from received data: '{text_data}'", exc_info=True)
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {"type": "new_order", "data": data["data"]}
+                )
+
+                # lazy import로 꼬임 방지
+                from statistic.utils import push_statistics  
+                push_statistics(self.booth.id)
         except Exception as e:
-            logger.error(f"OrderConsumer: Error during receive processing: {e}", exc_info=True)
+            logger.error(f"OrderConsumer receive error: {e}", exc_info=True)
 
     async def new_order(self, event):
-        logger.debug(f"OrderConsumer: Handling 'new_order' event for sending: {event.get('data')}")
         await self.send(text_data=json.dumps({
             "type": "NEW_ORDER",
             "data": event["data"]
         }))
+
 
 
 # 직원 호출 웹소켓

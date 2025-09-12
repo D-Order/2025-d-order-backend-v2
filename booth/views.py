@@ -358,6 +358,10 @@ class TableResetAPIView(APIView):
             table.activated_at = None  # 활성화 구간 초기화(퇴장)
             table.save(update_fields=['status', 'activated_at'])
 
+            # 통계 업데이트 push
+            from statistic.utils import push_statistics
+            push_statistics(booth.id)
+
             return Response({
                 "status": "success",
                 "message": "테이블이 성공적으로 리셋되었습니다.",
