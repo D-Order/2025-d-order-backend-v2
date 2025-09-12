@@ -100,12 +100,11 @@ def get_statistics(booth_id: int):
 
     avg_table_usage = sum(table_usages) / len(table_usages) if table_usages else 0
 
-    # 회전율 (총 방문자 ÷ 테이블 수 ÷ 평균 이용시간(시간 단위))
-    if avg_table_usage > 0:
-        turnover_rate = round(
-            visitors / max(1, Table.objects.filter(booth=booth).count()) / (avg_table_usage / 60),
-            2,
-        )
+    # 회전율 (%): 영업시간 ÷ 평균 이용시간 × 100
+    first_order = Order.objects.filter(table__booth=booth).order_by("created_at").first()
+    if first_order and avg_table_usage > 0:
+        business_minutes = (now - first_order.created_at).total_seconds() // 60
+        turnover_rate = round((business_minutes / avg_table_usage) * 100, 2)
     else:
         turnover_rate = 0.0
 
@@ -140,6 +139,7 @@ def get_statistics(booth_id: int):
         "avg_table_usage": avg_table_usage,
         "turnover_rate": turnover_rate,
         "menu_wait_times": menu_wait_times,
+        "seat_type": manager.seat_type,
     }
 
 
