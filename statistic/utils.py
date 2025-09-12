@@ -99,7 +99,7 @@ def get_statistics(booth_id: int):
 
     # 평균 테이블 사용시간 (entered_at ~ 마지막 주문시간)
     table_usages = []
-    for table in Table.objects.filter(booth=booth, entered_at__isnull=False):
+    for table in Table.objects.filter(booth=booth, activated_at__isnull=False):
         latest_order = (
             Order.objects.filter(table=table)
             .order_by("-created_at")
@@ -107,7 +107,7 @@ def get_statistics(booth_id: int):
             .first()
         )
         if latest_order:
-            usage = (latest_order - table.entered_at).total_seconds() // 60  # 분 단위
+            usage = (latest_order - table.activated_at).total_seconds() // 60  # 분 단위
             table_usages.append(usage)
 
     avg_table_usage = sum(table_usages) / len(table_usages) if table_usages else 0
