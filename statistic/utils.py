@@ -1,22 +1,32 @@
-from django.db.models import Sum, F
+from django.db.models import Sum, F, Avg, DurationField, ExpressionWrapper
 from django.utils import timezone
-from order.models import Order, OrderMenu, OrderSetMenu
-from menu.models import Menu, SetMenuItem
+from order.models import Order, OrderMenu
+from menu.models import Menu
 from booth.models import Table
 from manager.models import Manager
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+from datetime import timedelta
+
 
 def get_statistics(booth_id: int):
     manager = Manager.objects.get(booth_id=booth_id)
     booth = manager.booth
     now = timezone.now()
 
-    # 총 주문 건수 & 최근 1시간 주문 수
-    total_orders = Order.objects.filter(table__booth=booth).count()
-    recent_orders = Order.objects.filter(
-        table__booth=booth, created_at__gte=now - timezone.timedelta(hours=1)
-    ).count()
+    # 총 주문 건수 & 최근 1시간 주문 수 (seat/seat_fee 제외)
+    total_orders = (
+        OrderMenu.objects.filter(order__table__booth=booth)
+        .exclude(menu__menu_category__in=["seat", "seat_fee"])
+        .count()
+    )
+    recent_orders = (
+        OrderMenu.objects.filter(
+            order__table__booth=booth, order__created_at__gte=now - timedelta(hours=1)
+        )
+        .exclude(menu__menu_category__in=["seat", "seat_fee"])
+        .count()
+    )
 
     # 방문자 수 (seat_type 별 처리)
     if manager.seat_type == "PP":
@@ -28,7 +38,7 @@ def get_statistics(booth_id: int):
             OrderMenu.objects.filter(
                 order__table__booth=booth,
                 menu__menu_category="seat",
-                order__created_at__gte=now - timezone.timedelta(hours=1),
+                order__created_at__gte=now - timedelta(hours=1),
             ).aggregate(total=Sum("quantity"))["total"] or 0
         )
     elif manager.seat_type == "PT":
@@ -38,7 +48,7 @@ def get_statistics(booth_id: int):
         recent_visitors = OrderMenu.objects.filter(
             order__table__booth=booth,
             menu__menu_category="seat_fee",
-            order__created_at__gte=now - timezone.timedelta(hours=1),
+            order__created_at__gte=now - timedelta(hours=1),
         ).count()
     else:
         visitors, recent_visitors = 0, 0
@@ -59,16 +69,63 @@ def get_statistics(booth_id: int):
         table__booth=booth, order_status__in=["accepted", "cooked"]
     ).count()
 
-    # TOP3 메뉴
+    # TOP3 메뉴 (이름, 가격, 수량)
     top3 = (
         OrderMenu.objects.filter(order__table__booth=booth)
-        .values("menu__menu_name")
+        .exclude(menu__menu_category__in=["seat", "seat_fee"])
+        .values("menu__menu_name", "menu__price")
         .annotate(total=Sum("quantity"))
         .order_by("-total")[:3]
     )
 
-    # 품절 임박 메뉴
-    low_stock = Menu.objects.filter(booth=booth, menu_amount__lte=5).values_list("menu_name", flat=True)
+    # 품절 임박 메뉴 (이름, 가격, 남은 수량)
+    low_stock = (
+        Menu.objects.filter(booth=booth, menu_amount__lte=5)
+        .exclude(menu_category__in=["seat", "seat_fee"])
+        .values("menu_name", "menu_price", "menu_amount")
+    )
+
+    # 평균 테이블 사용시간 (entered_at ~ 마지막 주문시간)
+    table_usages = []
+    for table in Table.objects.filter(booth=booth, entered_at__isnull=False):
+        latest_order = (
+            Order.objects.filter(table=table)
+            .order_by("-created_at")
+            .values_list("created_at", flat=True)
+            .first()
+        )
+        if latest_order:
+            usage = (latest_order - table.entered_at).total_seconds() // 60  # 분 단위
+            table_usages.append(usage)
+
+    avg_table_usage = sum(table_usages) / len(table_usages) if table_usages else 0
+
+    # 회전율 (총 방문자 ÷ 테이블 수 ÷ 평균 이용시간(시간 단위))
+    if avg_table_usage > 0:
+        turnover_rate = round(
+            visitors / max(1, Table.objects.filter(booth=booth).count()) / (avg_table_usage / 60),
+            2,
+        )
+    else:
+        turnover_rate = 0.0
+
+    # 메뉴별 평균 대기시간 (seat/seat_fee 제외)
+    menu_waits = (
+        OrderMenu.objects.filter(order__table__booth=booth, order__served_at__isnull=False)
+        .exclude(menu__menu_category__in=["seat", "seat_fee"])
+        .annotate(
+            wait_time=ExpressionWrapper(
+                F("order__served_at") - F("order__created_at"),
+                output_field=DurationField(),
+            )
+        )
+        .values("menu__menu_name")
+        .annotate(avg_wait=Avg("wait_time"))
+    )
+    menu_wait_times = [
+        {"menu_name": m["menu__menu_name"], "avg_wait_minutes": int(m["avg_wait"].total_seconds() // 60)}
+        for m in menu_waits if m["avg_wait"] is not None
+    ]
 
     return {
         "total_orders": total_orders,
@@ -80,14 +137,19 @@ def get_statistics(booth_id: int):
         "waiting_count": waiting_count,
         "top3_menus": list(top3),
         "low_stock": list(low_stock),
+        "avg_table_usage": avg_table_usage,
+        "turnover_rate": turnover_rate,
+        "menu_wait_times": menu_wait_times,
     }
-    
-def push_statistics(booth_id: int):
 
-    from statistic.utils import get_statistics  # lazy import 방지용
+
+def push_statistics(booth_id: int):
+    # lazy import → 순환 참조 방지
+    from statistic.utils import get_statistics
+
     stats = get_statistics(booth_id)
     channel_layer = get_channel_layer()
     async_to_sync(channel_layer.group_send)(
         f"booth_{booth_id}_statistics",
-        {"type": "statistics_update", "data": stats}
+        {"type": "statistics_update", "data": stats},
     )
