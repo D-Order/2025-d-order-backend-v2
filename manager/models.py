@@ -51,7 +51,7 @@ class Manager(models.Model):
         img.save(buf, format="PNG")
         buf.seek(0)
 
-        filename = f"manager_{self.pk}_qr.png"
+        filename = f"{self.pk}_{self.booth.booth_name}_qr.png"
         self.table_qr_image.save(filename, ContentFile(buf.read()), save=False)
         buf.close()
 # 최초 생성 시 이미지가 없으면 자동 생성
