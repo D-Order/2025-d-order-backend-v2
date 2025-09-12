@@ -55,18 +55,32 @@ class CartDetailView(APIView):
         is_first = _is_first_session(table)
         serializer = CartDetailSerializer(cart)
 
+        subtotal, table_fee = 0, 0
+        for cm in CartMenu.objects.filter(cart=cart).select_related("menu"):
+            if cm.menu.menu_category == SEAT_FEE_CATEGORY:
+                table_fee += cm.menu.menu_price * cm.quantity
+            else:
+                subtotal += cm.menu.menu_price * cm.quantity
+
+        for cs in CartSetMenu.objects.filter(cart=cart).select_related("set_menu"):
+            subtotal += cs.set_menu.set_price * cs.quantity
+
         return Response({
             "status": "success",
             "code": 200,
             "data": {
                 "cart": serializer.data,
-                "is_first_order": is_first
+                "is_first_order": is_first,
+                "subtotal": subtotal,
+                "table_fee": table_fee,
+                "total_price": subtotal + table_fee
             }
         }, status=HTTP_200_OK)
 
-
 class CartAddView(APIView):
     def post(self, request):
+        print("📥 [CartAddView] raw data:", request.data)
+        print("📥 [CartAddView] headers:", request.headers)
         booth_id = request.headers.get("Booth-ID")
         if not booth_id:
             return Response({"status": "fail", "message": "Booth-ID 헤더가 누락되었습니다."},
@@ -77,8 +91,13 @@ class CartAddView(APIView):
         item_id = request.data.get("id")
         quantity = request.data.get("quantity")
 
-        if not all([table_num, type_, item_id, quantity]):
+        if not table_num or not type_ or quantity is None:
             return Response({"status": "fail", "message": "요청 데이터가 누락되었습니다."},
+                            status=HTTP_400_BAD_REQUEST)
+
+        # seat_fee가 아닌 경우에만 id 필수 체크
+        if type_ in ("menu", "set_menu") and not item_id:
+            return Response({"status": "fail", "message": "id가 필요합니다."},
                             status=HTTP_400_BAD_REQUEST)
 
         try:
@@ -115,6 +134,46 @@ class CartAddView(APIView):
             menu_name = set_menu.set_name
             menu_price = set_menu.set_price
             menu_image = set_menu.set_image.url if set_menu.set_image else None
+        
+        # ------------------- 테이블 이용료 -------------------
+        elif type_ == "seat_fee":
+            manager = get_object_or_404(Manager, booth_id=booth_id)
+
+            if manager.seat_type == "NO":
+                return Response({"status": "fail", "message": "해당 부스는 테이블 이용료가 없습니다."},
+                                status=HTTP_400_BAD_REQUEST)
+
+            if manager.seat_type == "PP":   # 인당 과금
+                if quantity <= 0:
+                    return Response({"status": "fail", "message": "인원수는 1명 이상이어야 합니다."},
+                                    status=HTTP_400_BAD_REQUEST)
+                fee_price = manager.seat_tax_person
+                menu_name = "테이블 이용료(인당)"
+            elif manager.seat_type == "PT": # 테이블당 과금
+                quantity = 1  # 강제 1개
+                fee_price = manager.seat_tax_table
+                menu_name = "테이블 이용료(테이블당)"
+
+            # seat_fee 전용 Menu (없으면 생성)
+            fee_menu, _ = Menu.objects.get_or_create(
+                booth=manager.booth,
+                menu_name=menu_name,
+                menu_category=SEAT_FEE_CATEGORY,
+                defaults={
+                    "menu_price": fee_price,
+                    "menu_amount": 999999  # 사실상 무제한
+                }
+            )
+
+            # 중복 방지
+            if CartMenu.objects.filter(cart=cart, menu=fee_menu).exists():
+                return Response({"status": "fail", "message": "테이블 이용료는 이미 추가되었습니다."},
+                                status=HTTP_400_BAD_REQUEST)
+
+            cart_item = CartMenu.objects.create(cart=cart, menu=fee_menu, quantity=quantity)
+            menu_name = fee_menu.menu_name
+            menu_price = fee_price
+            menu_image = None
 
         else:
             return Response({"status": "fail", "message": "type은 menu 또는 set_menu이어야 합니다."},
@@ -225,6 +284,7 @@ class CartMenuUpdateView(APIView):
 
             cart_item.quantity = quantity
             cart_item.save()
+    
 
             return Response({
                 "status": "success",
@@ -239,6 +299,41 @@ class CartMenuUpdateView(APIView):
                         "quantity": quantity,
                         "menu_price": set_menu.set_price,
                         "menu_image": set_menu.set_image.url if set_menu.set_image else None
+                    }
+                }
+            }, status=200)
+        elif type_ == "seat_fee":
+            try:
+                cart_item = CartMenu.objects.get(cart=cart, menu_id=menu_id, menu__menu_category=SEAT_FEE_CATEGORY)
+                menu = cart_item.menu
+            except CartMenu.DoesNotExist:
+                return Response({"status": "fail", "message": "해당 테이블 이용료를 찾을 수 없습니다."}, status=404)
+
+            if quantity == 0:
+                cart_item.delete()
+                return Response({
+                    "status": "success",
+                    "code": 200,
+                    "message": "장바구니에서 테이블 이용료가 삭제되었습니다.",
+                    "data": {"table_num": table_num}
+                }, status=200)
+
+            cart_item.quantity = quantity
+            cart_item.save()
+
+            return Response({
+                "status": "success",
+                "code": 200,
+                "message": "테이블 이용료 수량이 수정되었습니다.",
+                "data": {
+                    "table_num": table_num,
+                    "cart_item": {
+                        "type": "seat_fee",
+                        "id": menu_id,
+                        "menu_name": menu.menu_name,
+                        "quantity": quantity,
+                        "menu_price": menu.menu_price,
+                        "menu_image": None
                     }
                 }
             }, status=200)
@@ -268,13 +363,17 @@ class PaymentInfoView(APIView):
             }, status=HTTP_404_NOT_FOUND)
 
         if _is_first_session(table):
-            has_fee = CartMenu.objects.filter(cart=cart, menu__menu_category=SEAT_FEE_CATEGORY).exists()
-            if not has_fee:
-                return Response({
-                    "status": "fail",
-                    "message": "테이블 이용료 주문이 필요해요!"
-                }, status=HTTP_400_BAD_REQUEST)
+            manager = get_object_or_404(Manager, booth_id=booth_id)
+            # seat_type 이 NO 가 아닐 때만 seat_fee 필수 검증
+            if manager.seat_type != "NO":
+                has_fee = CartMenu.objects.filter(cart=cart, menu__menu_category=SEAT_FEE_CATEGORY).exists()
+                if not has_fee:
+                    return Response({
+                        "status": "fail",
+                        "message": "첫 주문에는 테이블 이용료가 필요합니다."
+                    }, status=HTTP_400_BAD_REQUEST)
 
+        subtotal, table_fee = 0, 0
         for cm in CartMenu.objects.filter(cart=cart).select_related("menu"):
             if not Menu.objects.filter(id=cm.menu_id, booth_id=booth_id).exists():
                 return Response({
@@ -291,6 +390,10 @@ class PaymentInfoView(APIView):
                     "status": "fail",
                     "message": f"{cm.menu.menu_name}은(는) 최대 {cm.menu.menu_amount}개까지만 주문할 수 있어요!"
                 }, status=HTTP_400_BAD_REQUEST)
+            if cm.menu.menu_category == SEAT_FEE_CATEGORY:
+                table_fee += cm.menu.menu_price * cm.quantity
+            else:
+                subtotal += cm.menu.menu_price * cm.quantity
 
         for cs in CartSetMenu.objects.filter(cart=cart).select_related("set_menu"):
             if not SetMenu.objects.filter(id=cs.set_menu_id, booth_id=booth_id).exists():
@@ -298,6 +401,7 @@ class PaymentInfoView(APIView):
                     "status": "fail",
                     "message": "현재 존재하지 않는 세트메뉴입니다."
                 }, status=HTTP_404_NOT_FOUND)
+
             for item in SetMenuItem.objects.filter(set_menu=cs.set_menu):
                 total_required = item.quantity * cs.quantity
                 if item.menu.menu_amount <= 0:
@@ -311,18 +415,18 @@ class PaymentInfoView(APIView):
                         "message": f"{item.menu.menu_name}은(는) 최대 {item.menu.menu_amount}개까지만 주문할 수 있어요!"
                     }, status=HTTP_400_BAD_REQUEST)
 
-        subtotal = sum(cm.menu.menu_price * cm.quantity
-                        for cm in CartMenu.objects.filter(cart=cart))
-        subtotal += sum(cs.set_menu.set_price * cs.quantity
-                        for cs in CartSetMenu.objects.filter(cart=cart))
+            subtotal += cs.set_menu.set_price * cs.quantity
 
+        total_price = subtotal + table_fee
         manager = get_object_or_404(Manager, booth_id=booth_id)
 
         return Response({
             "status": "success",
             "code": 200,
             "data": {
-                "total_price": subtotal,
+                "subtotal": subtotal,         # 메뉴 + 세트메뉴
+                "table_fee": table_fee,       # seat_fee만 따로 합산
+                "total_price": total_price,   # 최종 결제 금액
                 "bank_name": manager.bank,
                 "account_number": manager.account,
                 "account_holder": manager.depositor,
@@ -334,16 +438,29 @@ class PaymentInfoView(APIView):
 class ApplyCouponView(APIView):
     permission_classes = []
     def post(self, request):
-        # 1️⃣ Table-ID 헤더 확인
-        table_id = request.headers.get('Table-ID')
-        if not table_id:
-            return Response({"status": "fail", "code": 400, "message": "Table-ID 헤더가 필요합니다."},
-                            status=status.HTTP_400_BAD_REQUEST)
+        # 1️⃣ Booth-ID 헤더 확인
+        booth_id = request.headers.get('Booth-ID')
+        if not booth_id:
+            return Response({
+                "status": "fail", "code": 400,
+                "message": "Booth-ID 헤더가 필요합니다."
+            }, status=HTTP_400_BAD_REQUEST)
 
-        table = Table.objects.filter(id=table_id).first()
+        # 2️⃣ Body에서 table_num 가져오기
+        table_num = request.data.get("table_num")
+        if not table_num:
+            return Response({
+                "status": "fail", "code": 400,
+                "message": "table_num 값이 필요합니다."
+            }, status=HTTP_400_BAD_REQUEST)
+
+        # 3️⃣ Booth + table_num 조합으로 테이블 찾기
+        table = Table.objects.filter(table_num=table_num, booth_id=booth_id).first()
         if not table:
-            return Response({"status": "fail", "code": 404, "message": "테이블을 찾을 수 없습니다."},
-                            status=status.HTTP_404_NOT_FOUND)
+            return Response({
+                "status": "fail", "code": 404,
+                "message": "해당 테이블을 찾을 수 없습니다."
+            }, status=HTTP_404_NOT_FOUND)
 
         # 2️⃣ 현재 활성화된 Cart 가져오기
         cart = Cart.objects.filter(table=table, is_ordered=False).order_by('-created_at').first()
@@ -369,17 +486,26 @@ class ApplyCouponView(APIView):
         if coupon_code.issued_to_table and coupon_code.issued_to_table != table:
             return Response({"status": "fail", "code": 400, "message": "이미 다른 테이블에 적용된 쿠폰입니다."},
                             status=status.HTTP_400_BAD_REQUEST)
+        
+        # 🚨 부스 검증 추가
+        if coupon_code.coupon.booth_id != int(booth_id):
+            return Response({
+                "status": "fail", "code": 400,
+                "message": "이 부스에서 사용할 수 없는 쿠폰입니다."
+            }, status=HTTP_400_BAD_REQUEST)
 
-        # 5️⃣ Cart 총합 계산
-        total_price_before = 0
-
-        # 메뉴 금액
+        # 7️⃣ Cart 총합 계산 (seat_fee 포함)
+        subtotal, table_fee = 0, 0
         for cm in CartMenu.objects.filter(cart=cart).select_related('menu'):
-            total_price_before += (cm.menu.menu_price or 0) * cm.quantity
+            if cm.menu.menu_category == SEAT_FEE_CATEGORY:
+                table_fee += (cm.menu.menu_price or 0) * cm.quantity
+            else:
+                subtotal += (cm.menu.menu_price or 0) * cm.quantity
 
-        # 세트메뉴 금액
         for cs in CartSetMenu.objects.filter(cart=cart).select_related('set_menu'):
-            total_price_before += (cs.set_menu.set_price or 0) * cs.quantity
+            subtotal += (cs.set_menu.set_price or 0) * cs.quantity
+
+        total_price_before = subtotal + table_fee
 
         # 6️⃣ 할인 계산
         discount_type = coupon_code.coupon.discount_type.lower()
@@ -404,38 +530,51 @@ class ApplyCouponView(APIView):
                 "coupon_name": coupon_code.coupon.coupon_name,
                 "discount_type": discount_type,
                 "discount_value": discount_value,
+                "subtotal": subtotal,
+                "table_fee": table_fee,
                 "total_price_before": total_price_before,
                 "total_price_after": total_price_after
             }
         }, status=status.HTTP_200_OK)
     def delete(self, request):
-        # 1️⃣ Table-ID 헤더 확인
-        table_id = request.headers.get('Table-ID')
-        if not table_id:
-            return Response({"status": "fail", "code": 400, "message": "Table-ID 헤더가 필요합니다."},
-                            status=status.HTTP_400_BAD_REQUEST)
+        # 1️⃣ Booth-ID 헤더 확인
+        booth_id = request.headers.get('Booth-ID')
+        if not booth_id:
+            return Response({
+                "status": "fail", "code": 400,
+                "message": "Booth-ID 헤더가 필요합니다."
+            }, status=HTTP_400_BAD_REQUEST)
 
-        table = Table.objects.filter(id=table_id).first()
+        # 2️⃣ Body에서 table_num 가져오기
+        table_num = request.data.get("table_num")
+        if not table_num:
+            return Response({
+                "status": "fail", "code": 400,
+                "message": "table_num 값이 필요합니다."
+            }, status=HTTP_400_BAD_REQUEST)
+
+        # 3️⃣ Booth + table_num 조합으로 테이블 찾기
+        table = Table.objects.filter(table_num=table_num, booth_id=booth_id).first()
         if not table:
-            return Response({"status": "fail", "code": 404, "message": "테이블을 찾을 수 없습니다."},
-                            status=status.HTTP_404_NOT_FOUND)
+            return Response({
+                "status": "fail", "code": 404,
+                "message": "테이블을 찾을 수 없습니다."
+            }, status=HTTP_404_NOT_FOUND)
 
-        # 2️⃣ 현재 활성화된 Cart 가져오기
         cart = Cart.objects.filter(table=table, is_ordered=False).order_by('-created_at').first()
         if not cart:
-            return Response({"status": "fail", "code": 404, "message": "활성화된 장바구니가 없습니다."},
-                            status=status.HTTP_404_NOT_FOUND)
+            return Response({
+                "status": "fail", "code": 404,
+                "message": "활성화된 장바구니가 없습니다."
+            }, status=HTTP_404_NOT_FOUND)
 
-        # 3️⃣ 해당 테이블에 적용된 쿠폰 찾기
         coupon_codes = CouponCode.objects.filter(issued_to_table=table, used_at__isnull=True)
         if not coupon_codes.exists():
             return Response({
-                "status": "fail",
-                "code": 404,
+                "status": "fail", "code": 404,
                 "message": "이 테이블에 적용된 쿠폰이 없습니다."
-            }, status=status.HTTP_404_NOT_FOUND)
+            }, status=HTTP_404_NOT_FOUND)
 
-        # 4️⃣ 쿠폰 적용 해제 (예약만 취소)
         for c in coupon_codes:
             c.issued_to_table = None
             c.save(update_fields=['issued_to_table'])
@@ -450,4 +589,4 @@ class ApplyCouponView(APIView):
                 "table_id": table.id,
                 "table_num": table.table_num
             }
-        }, status=status.HTTP_200_OK)
+        }, status=HTTP_200_OK)

@@ -4,6 +4,7 @@ from menu.models import Menu, SetMenu, SetMenuItem
 
 
 class CartMenuSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(source="menu.id", read_only=True)  # ✅ Menu.id 반환
     menu_name = serializers.CharField(source='menu.menu_name', read_only=True)
     menu_price = serializers.IntegerField(source='menu.menu_price', read_only=True)
     menu_image = serializers.SerializerMethodField()
@@ -24,6 +25,8 @@ class CartMenuSerializer(serializers.ModelSerializer):
 
 
 class CartSetMenuSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(source="set_menu.id", read_only=True)  # ✅ Menu.id 반환
+
     menu_name = serializers.CharField(source='set_menu.set_name', read_only=True)
     menu_price = serializers.IntegerField(source='set_menu.set_price', read_only=True)
     menu_image = serializers.SerializerMethodField()
