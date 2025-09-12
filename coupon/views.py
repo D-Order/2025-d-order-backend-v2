@@ -11,6 +11,11 @@ from .serializers import CouponCreateSerializer, CouponListItemSerializer
 from secrets import choice
 import string
 from rest_framework.views import APIView
+from .utils import build_codes_only_xlsx
+from django.http import HttpResponse
+from django.utils import timezone
+from django.utils.text import slugify
+from django.shortcuts import get_object_or_404
 
 
 ALPHANUM = string.ascii_uppercase + string.digits
@@ -20,7 +25,9 @@ def generate_unique_codes(n: int, length: int = 5) -> list[str]:
     codes = set()
     while len(codes) < n:
         need = n - len(codes)
+        # 배치로 1차 생성 (중복 제거 전)
         batch = {"".join(choice(ALPHANUM) for _ in range(length)) for _ in range(need)}
+        # DB에 이미 존재하는 코드 제거
         exists = set(
             CouponCode.objects.filter(code__in=batch).values_list("code", flat=True)
         )
@@ -199,3 +206,45 @@ class CouponCodeListView(APIView):
             status=status.HTTP_200_OK,
         )
         
+class CouponExportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+
+
+    def get(self, request, coupon_id: int):
+        booth = get_booth_or_403(request)
+        if not booth:
+            return HttpResponse("권한이 없습니다(booth 확인 실패).", status=403)
+
+        # 내 부스 쿠폰만 접근 허용
+        coupon = get_object_or_404(Coupon, id=coupon_id, booth=booth)
+
+        # 단일 쿠폰의 코드만 조회 (필요시 정렬 변경 가능)
+        qs = (
+            CouponCode.objects
+            .filter(coupon=coupon)
+            .only("code", "issued_to_table", "used_at")  # 가벼운 쿼리
+            .order_by("id")  # 생성순 정렬 (오래된게 앞에)
+        )
+
+        # 엑셀 생성
+        meta_title = f"[{booth.booth_name}] {coupon.coupon_name} - 코드 내보내기"
+        bio = build_codes_only_xlsx(qs, sheet_name="coupon_codes", meta_title=meta_title)
+
+        # 파일명
+        safe_coupon = slugify(coupon.coupon_name) or f"coupon_{coupon.id}"
+        now = timezone.now()
+        if timezone.is_naive(now):
+            ts = now.strftime("%Y%m%d_%H%M%S")                     # naive면 그대로 포맷
+        else:
+            ts = timezone.localtime(now).strftime("%Y%m%d_%H%M%S") # aware면 localtime 적용
+
+        filename = f"{safe_coupon}_codes_{ts}.xlsx"
+
+        # 응답
+        resp = HttpResponse(
+            bio.read(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return resp
