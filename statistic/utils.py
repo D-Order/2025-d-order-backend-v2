@@ -1,4 +1,5 @@
-from django.db.models import Sum, F, Avg, DurationField, ExpressionWrapper
+from django.db.models import Sum, F, Avg, DurationField, ExpressionWrapper, Q
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from order.models import Order, OrderMenu
 from menu.models import Menu
@@ -69,20 +70,31 @@ def get_statistics(booth_id: int):
         table__booth=booth, order_status__in=["accepted", "cooked"]
     ).count()
 
-    # TOP3 메뉴 (이름, 가격, 수량)
+    # TOP3 메뉴 (이름, 이미지, 가격, 판매 수량)
     top3 = (
         OrderMenu.objects.filter(order__table__booth=booth)
         .exclude(menu__menu_category__in=["seat", "seat_fee"])
-        .values("menu__menu_name", "menu__price")
-        .annotate(total=Sum("quantity"))
-        .order_by("-total")[:3]
+        .values("menu__menu_name", "menu__menu_image", "menu__menu_price")
+        .annotate(total_quantity=Sum("quantity"))
+        .order_by("-total_quantity")[:3]
     )
 
-    # 품절 임박 메뉴 (이름, 가격, 남은 수량)
+    # 품절 임박 메뉴 (이름, 이미지, 가격, 남은 수량)
     low_stock = (
-        Menu.objects.filter(booth=booth, menu_amount__lte=5)
+        Menu.objects.filter(booth=booth)
         .exclude(menu_category__in=["seat", "seat_fee"])
-        .values("menu_name", "menu_price", "menu_amount")
+        .annotate(
+            reserved=Coalesce(
+                Sum(
+                    "ordermenu__quantity",
+                    filter=Q(ordermenu__order__order_status__in=["pending", "accepted", "preparing", "cooked"])
+                ),
+                0,
+            )
+        )
+        .annotate(remaining=F("menu_amount") - F("reserved"))
+        .filter(remaining__lte=5)
+        .values("menu_name", "menu_image", "menu_price", "remaining")
     )
 
     # 평균 테이블 사용시간 (entered_at ~ 마지막 주문시간)
