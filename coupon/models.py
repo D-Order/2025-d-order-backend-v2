@@ -10,6 +10,9 @@ class Coupon(models.Model):
     quantity = models.IntegerField()
     created_at = models.DateTimeField(auto_now_add=True)
 
+    def __str__(self):
+        return self.coupon_name
+
 class TableCoupon(models.Model):
     table = models.ForeignKey(Table, on_delete=models.CASCADE)
     coupon = models.ForeignKey(Coupon, on_delete=models.CASCADE)
@@ -21,6 +24,6 @@ class CouponCode(models.Model):
     code = models.CharField(max_length=16, unique=True, db_index=True)
     issued_to_table = models.ForeignKey(Table, null=True, blank=True, on_delete=models.SET_NULL)
     used_at = models.DateTimeField(null=True, blank=True)
-
+    
     def __str__(self):
         return self.code
