@@ -52,9 +52,23 @@ class SignupView(APIView):
                 }
             }, status=status.HTTP_201_CREATED)
 
-            # 토큰을 쿠키에 저장
-            res.set_cookie("access", access_token, httponly=False, samesite="Lax", secure=False)
-            res.set_cookie("refresh", refresh_token, httponly=False, samesite="Lax", secure=False)
+            # 수정 access token: 세션 유지용, HttpOnly 쿠키
+            res.set_cookie(
+                "access",
+                access_token,
+                httponly=True,
+                samesite="None",
+                secure=True
+            )
+
+            # 수정 refresh token: 장기 보관용, HttpOnly 쿠키
+            res.set_cookie(
+                "refresh",
+                refresh_token,
+                httponly=True,
+                samesite="None",
+                secure=True
+            )
 
             return res
 
