@@ -5,6 +5,4 @@ urlpatterns = [
     path("orders/order_check/", OrderPasswordVerifyView.as_view()),
     path("<int:table_num>/orders/", TableOrderListView.as_view()),
     path("call_staff/", CallStaffAPIView.as_view(), name="call-staff"),
-    path("coupon/order/", OrderCouponConfirmView.as_view(), name='order-coupon-confirm'),
-
 ]

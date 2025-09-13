@@ -29,6 +29,19 @@ class OrderMenu(models.Model):
     menu = models.ForeignKey(Menu, on_delete=models.CASCADE)
     quantity = models.IntegerField()
     fixed_price = models.IntegerField() # 주문 당시 실제 가격임. 헷갈리지 말 것!
+    ordersetmenu = models.ForeignKey(
+        "OrderSetMenu",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="order_menus"
+    )  # ✅ 세트 구성품이면 소속 세트 기록
+    # ✅ 개별 상태 필드 추가
+    status = models.CharField(
+        max_length=20,
+        choices=[("pending", "대기"), ("cooked", "조리완료"), ("served", "서빙완료")],
+        default="pending"
+    )
 
     def __str__(self):
         return f"OrderMenu #{self.pk} - {self.menu.menu_name} x{self.quantity}"
@@ -41,6 +54,12 @@ class OrderSetMenu(models.Model):
     set_menu = models.ForeignKey(SetMenu, on_delete=models.CASCADE)
     quantity = models.IntegerField()
     fixed_price = models.IntegerField() # 주문 당시 실제 가격.
+    # ✅ 개별 상태 필드 추가
+    status = models.CharField(
+        max_length=20,
+        choices=[("pending", "대기"), ("cooked", "조리완료"), ("served", "서빙완료")],
+        default="pending"
+    )
 
     def __str__(self):
         return f"OrderSetMenu #{self.pk} - {self.set_menu.set_name} x{self.quantity}"
