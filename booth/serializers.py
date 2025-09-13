@@ -83,7 +83,7 @@ class TableOrderSetMenuSerializer(serializers.ModelSerializer):
         model = OrderSetMenu
         fields = ['menu_image', 'menu_name', 'quantity', 'price']
         
-        def get_menu_name(self, obj):
+    def get_menu_name(self, obj):
         if obj.menu.menu_category == "seat_fee":
             return "테이블 이용료"
         return obj.menu.menu_name

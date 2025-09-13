@@ -110,7 +110,6 @@ class OrderPasswordVerifyView(APIView):
             with transaction.atomic():
                 order = Order.objects.create(
                     table_id=table.id,
-                    order_status="pending",
                     order_amount=0,
                 )
 
@@ -128,6 +127,7 @@ class OrderPasswordVerifyView(APIView):
                         menu=menu,
                         quantity=cm.quantity,
                         fixed_price=menu.menu_price,
+                        status="pending"
                     )
                     if menu.menu_category == SEAT_FEE_CATEGORY:
                         table_fee += menu.menu_price * cm.quantity
@@ -154,6 +154,7 @@ class OrderPasswordVerifyView(APIView):
                         set_menu=setmenu,
                         quantity=cs.quantity,
                         fixed_price=setmenu.set_price,
+                        status="pending"
                     )
                     for smi in sm_items:
                         OrderMenu.objects.create(
@@ -235,7 +236,7 @@ class OrderPasswordVerifyView(APIView):
                         "subtotal": subtotal,
                         "table_fee": table_fee,
                         "coupon_discount": coupon_discount,
-                        "coupon": coupon_code,
+                        "coupon": applied_coupon_code,
                         "booth_total_revenues": booth.total_revenues
                     }
                 }, status=201)
@@ -270,6 +271,9 @@ class TableOrderListView(APIView):
         valid_orders = Order.objects.filter(table=table)
         if activated_at:
             valid_orders = valid_orders.filter(created_at__gte=table.activated_at)
+            
+        total_amount = sum(o.order_amount for o in valid_orders)
+
 
         # ✅ OrderMenu만 조회 (세트 포함)
         order_menus = OrderMenu.objects.filter(order__in=valid_orders).select_related(
@@ -277,7 +281,6 @@ class TableOrderListView(APIView):
         )
 
         expanded = []
-        total_amount = 0
         
         for om in order_menus:
             row = {
@@ -288,7 +291,7 @@ class TableOrderListView(APIView):
                 "menu_price": float(om.menu.menu_price),
                 "fixed_price": om.fixed_price,
                 "quantity": om.quantity,
-                "order_status": om.order.order_status,
+                "status": om.status,
                 "created_at": om.order.created_at.isoformat(),
                 "updated_at": om.order.updated_at.isoformat(),
                 "order_amount": om.order.order_amount,
@@ -299,8 +302,6 @@ class TableOrderListView(APIView):
                 "set_id": om.ordersetmenu_id,
                 "set_name": om.ordersetmenu.set_menu.set_name if om.ordersetmenu else None,
             }
-
-            total_amount += om.fixed_price * om.quantity
             expanded.append(row)
 
         expanded.sort(key=lambda x: x["created_at"])

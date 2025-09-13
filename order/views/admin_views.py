@@ -166,6 +166,7 @@ class OrderListView(APIView):
 
     def get(self, request):
         manager = Manager.objects.get(user=request.user)
+        booth = manager.booth
         booth_id = manager.booth_id
 
         type_param = request.GET.get("type")
@@ -175,47 +176,54 @@ class OrderListView(APIView):
         menu_filter = (request.GET.get("menu") or "").strip().lower()
         category_filter = (request.GET.get("category") or "").strip().lower()
 
+        # ✅ 부스 내 모든 주문
         order_query = Order.objects.filter(table__booth_id=booth_id)
-        if type_param == "kitchen":
-            order_query = order_query.filter(order_status__in=["pending", "accepted", "preparing"])
-        elif type_param == "serving":
-            order_query = order_query.filter(order_status__in=["cooked", "served"])
 
-        order_query = order_query.distinct().order_by("table_id", "created_at")
-
-        total_revenue = Booth.objects.get(pk=booth_id).total_revenues
-
+        # ✅ 각 테이블의 활성화 이후 주문만 필터링
+        valid_orders = []
+        for table in Table.objects.filter(booth_id=booth_id):
+            activated_at = getattr(table, "activated_at", None)
+            qs = order_query.filter(table=table)
+            if activated_at:
+                qs = qs.filter(created_at__gte=activated_at)
+            valid_orders.extend(list(qs))
+            
+        total_revenue = booth.total_revenues
         expanded = []
 
-        for order in order_query:
+    
+        for order in valid_orders:
             # ✅ 일반 메뉴
             for om in OrderMenu.objects.filter(order=order).select_related("menu", "ordersetmenu__set_menu"):
                 if om.menu.menu_category == SEAT_FEE_CATEGORY:
                     continue  # 🚨 seat_fee 제외
-                data = OrderMenuSerializer(om).data
-                data["from_set"] = om.ordersetmenu_id is not None
-                data["created_at"] = om.order.created_at.isoformat()
-                data["menu_category"] = getattr(om.menu, "menu_category", None)
-                expanded.append(data)
-
-            # ✅ 세트메뉴
-            for osm in OrderSetMenu.objects.filter(order=order).select_related("set_menu"):
-                for smi in SetMenuItem.objects.filter(set_menu_id=osm.set_menu_id).select_related("menu"):
-                    if smi.menu.menu_category == SEAT_FEE_CATEGORY:
-                        continue  # 🚨 seat_fee 제외
-                    expanded.append({
-                        "id": None,
-                        "order": osm.order_id,
-                        "menu": smi.menu_id,
-                        "menu_name": smi.menu.menu_name,
-                        "menu_category": getattr(smi.menu, "menu_category", None),
-                        "fixed_price": smi.menu.menu_price,
-                        "quantity": smi.quantity * osm.quantity,
-                        "created_at": osm.order.created_at.isoformat(),
-                        "from_set": True,
-                        "set_id": osm.set_menu_id,
-                        "set_name": osm.set_menu.set_name,
-                    })
+                
+                # 🚨 type 필터는 order_status 대신 menu.status 사용
+                if type_param == "kitchen" and om.status not in ["pending", "cooked"]:
+                    continue
+                if type_param == "serving" and om.status not in ["cooked", "served"]:
+                    continue
+                
+                expanded.append({
+                    "id": om.id,
+                    "order_id": om.order_id,
+                    "menu_id": om.menu_id,
+                    "menu_name": om.menu.menu_name,
+                    "menu_price": float(om.menu.menu_price),
+                    "fixed_price": om.fixed_price,
+                    "quantity": om.quantity,
+                    "status": om.status,  # ✅ 개별 메뉴 상태
+                    # "order_status": om.order.order_status,
+                    "created_at": om.order.created_at.isoformat(),
+                    "updated_at": om.order.updated_at.isoformat(),
+                    "order_amount": om.order.order_amount,
+                    "table_num": om.order.table.table_num,
+                    "menu_image": om.menu.menu_image.url if om.menu.menu_image else None,
+                    "menu_category": om.menu.menu_category,
+                    "from_set": om.ordersetmenu_id is not None,
+                    "set_id": om.ordersetmenu_id,
+                    "set_name": om.ordersetmenu.set_menu.set_name if om.ordersetmenu else None,
+                })
 
 
         if menu_filter or category_filter:
@@ -239,129 +247,8 @@ class OrderListView(APIView):
                 "orders": expanded
             }
         }, status=200)
-        
-class KitchenOrderCookedView(APIView):
-    """
-    POST /api/v2/kitchen/orders/
-    요청 body:
-    {
-        "type": "menu" | "setmenu",
-        "id": <ordermenu_id or ordersetmenu_id>
-    }
-    """
-    permission_classes = [IsAuthenticated]
+ 
 
-    def post(self, request):
-        item_type = request.data.get("type")
-        item_id = request.data.get("id")
-
-        if item_type not in ["menu", "setmenu"] or not item_id:
-            return Response({
-                "status": "error",
-                "code": 400,
-                "message": "type은 menu 또는 setmenu이고 id는 필수입니다."
-            }, status=400)
-
-        if item_type == "menu":
-            obj = get_object_or_404(OrderMenu, pk=item_id)
-            order = obj.order
-            name = obj.menu.menu_name
-            price = obj.menu.menu_price
-            fixed_price = obj.fixed_price
-            qty = obj.quantity
-            image = obj.menu.menu_image.url if obj.menu.menu_image else None
-        else:  # setmenu
-            obj = get_object_or_404(OrderSetMenu, pk=item_id)
-            order = obj.order
-            name = obj.set_menu.set_name
-            price = obj.set_menu.set_price
-            fixed_price = obj.fixed_price
-            qty = obj.quantity
-            image = obj.set_menu.set_image.url if obj.set_menu.set_image else None
-
-        if order.order_status not in ["pending", "accepted", "preparing"]:
-            return Response({
-                "status": "error",
-                "code": 400,
-                "message": "이미 완료되었거나 취소된 주문은 조리 완료할 수 없습니다."
-            }, status=400)
-
-        order.order_status = "cooked"
-        order.save(update_fields=["order_status"])
-
-       # ✅ Serializer 적용
-        if isinstance(obj, OrderMenu):
-            data = OrderMenuSerializer(obj).data
-        else:
-            data = OrderSetMenuSerializer(obj).data
-
-        return Response({
-            "status": "success",
-            "code": 200,
-            "data": data
-        }, status=200)
-
-
-class ServingOrderCompleteView(APIView):
-    """
-    POST /api/v2/serving/orders/
-    요청 body:
-    {
-        "type": "menu" | "setmenu",
-        "id": <ordermenu_id or ordersetmenu_id>
-    }
-    """
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        item_type = request.data.get("type")
-        item_id = request.data.get("id")
-
-        if item_type not in ["menu", "setmenu"] or not item_id:
-            return Response({
-                "status": "error",
-                "code": 400,
-                "message": "type은 menu 또는 setmenu이고 id는 필수입니다."
-            }, status=400)
-
-        if item_type == "menu":
-            obj = get_object_or_404(OrderMenu, pk=item_id)
-            order = obj.order
-            name = obj.menu.menu_name
-            price = obj.menu.menu_price
-            fixed_price = obj.fixed_price
-            qty = obj.quantity
-            image = obj.menu.menu_image.url if obj.menu.menu_image else None
-        else:  # setmenu
-            obj = get_object_or_404(OrderSetMenu, pk=item_id)
-            order = obj.order
-            name = obj.set_menu.set_name
-            price = obj.set_menu.set_price
-            fixed_price = obj.fixed_price
-            qty = obj.quantity
-            image = obj.set_menu.set_image.url if obj.set_menu.set_image else None
-
-        if order.order_status != "cooked":
-            return Response({
-                "status": "error",
-                "code": 400,
-                "message": "조리 완료 상태가 아닌 주문은 서빙 완료할 수 없습니다."
-            }, status=400)
-
-        order.order_status = "served"
-        order.save(update_fields=["order_status"])
-
-       # ✅ Serializer 적용
-        if isinstance(obj, OrderMenu):
-            data = OrderMenuSerializer(obj).data
-        else:
-            data = OrderSetMenuSerializer(obj).data
-
-        return Response({
-            "status": "success",
-            "code": 200,
-            "data": data
-        }, status=200)
         
 class OrderCancelView(APIView):
     """
@@ -369,7 +256,7 @@ class OrderCancelView(APIView):
     PATCH /orders/<order_id>/cancel/
     """
 
-    permission_classes = []  # 필요 시 관리자 인증 붙이기
+    permission_classes = [IsAuthenticated]  # 필요 시 관리자 인증 붙이기
 
     def patch(self, request, order_id):
         booth_id = request.headers.get("Booth-ID")
@@ -502,6 +389,9 @@ class OrderCancelView(APIView):
                 booth = order.table.booth
                 booth.total_revenues = max((booth.total_revenues or 0) - total_refund, 0)
                 booth.save()
+                
+                from statistic.utils import push_statistics
+                push_statistics(booth.id)
 
                 return Response(
                     {
@@ -526,3 +416,213 @@ class OrderCancelView(APIView):
             return Response(
                 {"status": "error", "code": 500, "message": str(e)}, status=500
             )
+  
+class KitchenOrderCookedView(APIView):
+    """
+    POST /api/v2/kitchen/orders/
+    요청 body:
+    {
+        "type": "menu" | "setmenu",
+        "id": <ordermenu_id or ordersetmenu_id>
+    }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        item_type = request.data.get("type")
+        item_id = request.data.get("id")
+
+        if item_type not in ["menu", "setmenu"] or not item_id:
+            return Response({
+                "status": "error",
+                "code": 400,
+                "message": "type은 menu 또는 setmenu이고 id는 필수입니다."
+            }, status=400)
+
+        if item_type == "menu":
+            obj = get_object_or_404(OrderMenu, pk=item_id)
+            if obj.status != "pending":
+                return Response({
+                    "status": "error",
+                    "code": 400,
+                    "message": "대기 상태가 아닌 메뉴는 조리 완료할 수 없습니다."
+                }, status=400)
+
+            obj.status = "cooked"
+            obj.save(update_fields=["status"])
+
+            # ✅ 세트 동기화
+            if obj.ordersetmenu_id:
+                setmenu = obj.ordersetmenu
+                child_statuses = OrderMenu.objects.filter(
+                    ordersetmenu=setmenu
+                ).values_list("status", flat=True)
+
+                if all(s == "cooked" for s in child_statuses):
+                    setmenu.status = "cooked"
+                elif any(s == "pending" for s in child_statuses):
+                    setmenu.status = "pending"
+                setmenu.save(update_fields=["status"])
+
+        else:  # setmenu
+            obj = get_object_or_404(OrderSetMenu, pk=item_id)
+            if obj.status != "pending":
+                return Response({
+                    "status": "error",
+                    "code": 400,
+                    "message": "대기 상태가 아닌 세트는 조리 완료할 수 없습니다."
+                }, status=400)
+
+            obj.status = "cooked"
+            obj.save(update_fields=["status"])
+
+        # ✅ Serializer
+        if isinstance(obj, OrderMenu):
+            data = OrderMenuSerializer(obj).data
+        else:
+            data = OrderSetMenuSerializer(obj).data
+
+        return Response({"status": "success", "code": 200, "data": data}, status=200)
+
+
+class ServingOrderCompleteView(APIView):
+    """
+    POST /api/v2/serving/orders/
+    요청 body:
+    {
+        "type": "menu" | "setmenu",
+        "id": <ordermenu_id or ordersetmenu_id>
+    }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        item_type = request.data.get("type")
+        item_id = request.data.get("id")
+
+        if item_type not in ["menu", "setmenu"] or not item_id:
+            return Response({
+                "status": "error",
+                "code": 400,
+                "message": "type은 menu 또는 setmenu이고 id는 필수입니다."
+            }, status=400)
+
+        if item_type == "menu":
+            obj = get_object_or_404(OrderMenu, pk=item_id)
+            if obj.status != "cooked":
+                return Response({
+                    "status": "error",
+                    "code": 400,
+                    "message": "조리 완료 상태가 아닌 메뉴는 서빙 완료할 수 없습니다."
+                }, status=400)
+
+            obj.status = "served"
+            obj.save(update_fields=["status"])
+
+            # ✅ 세트 동기화
+            if obj.ordersetmenu_id:
+                setmenu = obj.ordersetmenu
+                child_statuses = OrderMenu.objects.filter(
+                    ordersetmenu=setmenu
+                ).values_list("status", flat=True)
+
+                if all(s == "served" for s in child_statuses):
+                    setmenu.status = "served"
+                elif any(s == "cooked" for s in child_statuses):
+                    setmenu.status = "cooked"
+                else:
+                    setmenu.status = "pending"
+                setmenu.save(update_fields=["status"])
+
+        else:  # setmenu
+            obj = get_object_or_404(OrderSetMenu, pk=item_id)
+            if obj.status != "cooked":
+                return Response({
+                    "status": "error",
+                    "code": 400,
+                    "message": "조리 완료 상태가 아닌 세트는 서빙 완료할 수 없습니다."
+                }, status=400)
+
+            obj.status = "served"
+            obj.save(update_fields=["status"])
+
+        # ✅ Serializer
+        if isinstance(obj, OrderMenu):
+            data = OrderMenuSerializer(obj).data
+        else:
+            data = OrderSetMenuSerializer(obj).data
+
+        return Response({"status": "success", "code": 200, "data": data}, status=200)
+
+
+class OrderRevertStatusView(APIView):
+    """
+    주문 상태 되돌리기 API (항목 단위)
+    PATCH /api/v2/orders/revert-status/
+    요청 body:
+    {
+        "id": <ordermenu_id>,
+        "target_status": "pending" | "cooked"
+    }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request):
+        item_id = request.data.get("id")
+        target_status = request.data.get("target_status")
+
+        if not item_id or target_status not in ["pending", "cooked"]:
+            return Response({
+                "status": "error",
+                "code": 400,
+                "message": "id와 target_status(pending|cooked)는 필수입니다."
+            }, status=400)
+
+        obj = OrderMenu.objects.filter(pk=item_id).first()
+        if not obj:
+            return Response({
+                "status": "error",
+                "code": 404,
+                "message": f"OrderMenu {item_id}를 찾을 수 없습니다."
+            }, status=404)
+
+        prev_status = obj.status
+
+        # 🚨 허용되는 되돌리기 규칙
+        allowed = {"cooked": "pending", "served": "cooked"}
+
+        if prev_status not in allowed or allowed[prev_status] != target_status:
+            return Response({
+                "status": "error",
+                "code": 400,
+                "message": f"{prev_status} 상태에서는 {target_status} 로 되돌릴 수 없습니다."
+            }, status=400)
+
+        obj.status = target_status
+        obj.save(update_fields=["status"])
+
+        # ✅ 세트 동기화
+        if obj.ordersetmenu_id:
+            setmenu = obj.ordersetmenu
+            child_statuses = OrderMenu.objects.filter(
+                ordersetmenu=setmenu
+            ).values_list("status", flat=True)
+
+            if all(s == "cooked" for s in child_statuses):
+                setmenu.status = "cooked"
+            elif all(s == "served" for s in child_statuses):
+                setmenu.status = "served"
+            else:
+                setmenu.status = "pending"
+            setmenu.save(update_fields=["status"])
+
+        return Response({
+            "status": "success",
+            "code": 200,
+            "message": f"항목 상태가 {prev_status} → {target_status} 로 되돌려졌습니다.",
+            "data": {
+                "ordermenu_id": obj.id,
+                "prev_status": prev_status,
+                "new_status": target_status
+            }
+        }, status=200)
