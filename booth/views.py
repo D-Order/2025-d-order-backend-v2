@@ -4,11 +4,14 @@ from booth.models import Booth, Table
 from django.utils import timezone
 from datetime import timedelta
 from order.models import *
+from cart.models import *
 from django.db.models import Sum, F
 from rest_framework import viewsets, status, permissions
 from rest_framework.permissions import IsAuthenticated
 from booth.serializers import *
 from manager.models import Manager
+from django.db.models import Q
+
 
 class IsManagerUser(permissions.BasePermission):
     """로그인한 사용자가 Manager와 연결되어 있는지 확인"""
@@ -206,7 +209,8 @@ class TableEnterAPIView(APIView):
                 "booth_name": booth.booth_name,
                 "table_status": table.status,
                 "remainingMinutes": remaining_minutes,
-                "expired": is_expired
+                "expired": is_expired,
+                "activated_at": table.activated_at
             }
         }, status=200)
         
@@ -240,28 +244,31 @@ class TableListView(APIView):
             total_amount = sum(o.order_amount for o in orders)
             status = table.status
 
-            # 최신 주문부터 아이템(메뉴/세트/이용료) flat하게 모으기: 최대 3개만!
-            orders_desc = orders.order_by('-created_at')
-            items = []
-            for order in orders_desc:
-                items += list(OrderMenu.objects.filter(order=order))
-                items += list(OrderSetMenu.objects.filter(order=order))
-                # items += list(OrderTableFee.objects.filter(order=order))
-                if len(items) >= 3:
-                    break
-            latest_items = items[:3]
+            # ✅ 주문 전체에서 최신순으로 아이템 수집
+            order_items = []
 
-            # 종류별로 맞는 serializer 사용
-            latest_orders_json = []
-            for obj in latest_items:
-                if isinstance(obj, OrderMenu):
-                    latest_orders_json.append(SimpleOrderMenuSerializer(obj).data)
-                elif isinstance(obj, OrderSetMenu):
-                    latest_orders_json.append(SimpleOrderSetMenuSerializer(obj).data)
-                # elif isinstance(obj, OrderTableFee):
-                #     fee_data = SimpleOrderTableFeeSerializer(obj).data
-                #     if fee_data:  # seat_type이 NO이면 빈 dict, 그 외엔 값이 있음
-                #         latest_orders_json.append(fee_data)
+            for order in orders.order_by("-created_at"):
+                # 단품 (세트 소속 아닌 것만)
+                for om in OrderMenu.objects.filter(order=order, ordersetmenu__isnull=True).select_related("menu"):
+                    order_items.append({
+                        "menu_name": "테이블 이용료(인당)" if om.menu.menu_category == "seat_fee" else om.menu.menu_name,
+                        "quantity": om.quantity,
+                        "created_at": om.order.created_at
+                    })
+
+                # 세트
+                for osm in OrderSetMenu.objects.filter(order=order).select_related("set_menu"):
+                    order_items.append({
+                        "menu_name": osm.set_menu.set_name,
+                        "quantity": osm.quantity,
+                        "created_at": osm.order.created_at
+                    })
+
+            # 최신순 정렬 후 3개만
+            latest_orders_json = sorted(order_items, key=lambda x: x["created_at"], reverse=True)[:3]
+            # created_at은 응답에 필요 없으니 제거
+            for item in latest_orders_json:
+                item.pop("created_at", None)
 
             result.append({
                 "table_num": table.table_num,
@@ -270,6 +277,7 @@ class TableListView(APIView):
                 "created_at": first_order_time,
                 "latest_orders": latest_orders_json
             })
+            
 
         return Response({
             "status": "success",
@@ -297,7 +305,6 @@ class TableDetailView(APIView):
         activated_at = table.activated_at
         status = table.status
 
-        # 활성화 안 된 테이블이면 빈값
         if not activated_at:
             return Response({
                 "status": "success",
@@ -313,29 +320,43 @@ class TableDetailView(APIView):
             }, status=200)
 
         # 활성화 구간 전체 주문 집계
-        orders = Order.objects.filter(table=table, created_at__gte=activated_at).order_by('created_at')
+        orders = Order.objects.filter(table=table, created_at__gte=activated_at).order_by("created_at")
         total_amount = sum(o.order_amount for o in orders)
         first_order = orders.first()
         first_order_time = first_order.created_at if first_order else None
 
-        # 활성화 구간내 모든 주문아이템 flat하게 추출
-        order_items = []
-        for order in orders:
-            order_items += list(OrderMenu.objects.filter(order=order))
-            order_items += list(OrderSetMenu.objects.filter(order=order))
-            # order_items += list(OrderTableFee.objects.filter(order=order))
-
-        # 각각 시리얼라이저로 응답 포맷 변환
         orders_json = []
-        for obj in order_items:
-            if isinstance(obj, OrderMenu):
-                orders_json.append(TableOrderMenuSerializer(obj).data)
-            elif isinstance(obj, OrderSetMenu):
-                orders_json.append(TableOrderSetMenuSerializer(obj).data)
-            # elif isinstance(obj, OrderTableFee):
-            #     fee_data = TableOrderFeeSerializer(obj).data
-            #     if fee_data and fee_data.get("menu_name") != "이용료 없음":
-            #         orders_json.append(fee_data)
+
+        # ✅ 단품 (세트 소속 아닌 것만)
+        order_menus = OrderMenu.objects.filter(
+            order__in=orders, ordersetmenu__isnull=True
+        ).select_related("menu", "order").order_by("-order__created_at")
+
+        for om in order_menus:
+            data = TableOrderMenuSerializer(om).data
+            if om.menu.menu_category == "seat_fee":
+                data["menu_name"] = "테이블 이용료(인당)"
+            # created_at 추가
+            data["created_at"] = om.order.created_at
+            orders_json.append(data)
+
+        # ✅ 세트 메뉴
+        order_sets = OrderSetMenu.objects.filter(
+            order__in=orders
+        ).select_related("set_menu", "order").order_by("-order__created_at")
+
+        for osm in order_sets:
+            data = TableOrderSetMenuSerializer(osm).data
+            # created_at 추가
+            data["created_at"] = osm.order.created_at
+            orders_json.append(data)
+
+        # ✅ 최신순 정렬
+        orders_json = sorted(orders_json, key=lambda x: x["created_at"], reverse=True)
+
+        # created_at은 최종 응답에서 필요 없으면 제거
+        for item in orders_json:
+            item.pop("created_at", None)
 
         return Response({
             "status": "success",
@@ -349,6 +370,7 @@ class TableDetailView(APIView):
                 "orders": orders_json
             }
         }, status=200)
+
         
 class TableResetAPIView(APIView):
     permission_classes = [IsAuthenticated, IsManagerUser]
@@ -403,6 +425,8 @@ class TableResetAPIView(APIView):
             table.status = "out"
             table.activated_at = None  # 활성화 구간 초기화(퇴장)
             table.save(update_fields=['status', 'activated_at'])
+            # 2️⃣ 장바구니 삭제 (히스토리 남기지 않고 바로 제거)
+            Cart.objects.filter(table=table, is_ordered=False).delete()
 
             # 통계 업데이트 push
             from statistic.utils import push_statistics
