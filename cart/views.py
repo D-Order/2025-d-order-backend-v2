@@ -43,6 +43,12 @@ class CartDetailView(APIView):
             }, status=HTTP_400_BAD_REQUEST)
 
         table = get_object_or_404(Table, booth_id=booth_id, table_num=table_num)
+        if table.status != "activate":
+            return Response({
+                "status": "fail",
+                "code": 400,
+                "message": "활성화되지 않은 테이블입니다."
+            }, status=HTTP_400_BAD_REQUEST)
         cart = Cart.objects.filter(table=table, is_ordered=False).order_by('-created_at').first()
         if not cart:
             return Response({
@@ -105,6 +111,13 @@ class CartAddView(APIView):
         except Table.DoesNotExist:
             return Response({"status": "fail", "message": "테이블을 찾을 수 없습니다."},
                             status=HTTP_404_NOT_FOUND)
+            
+        if table.status != "activate":
+            return Response({
+                "status": "fail",
+                "code": 400,
+                "message": "활성화되지 않은 테이블입니다."
+            }, status=HTTP_400_BAD_REQUEST)
 
         cart, _ = Cart.objects.get_or_create(table=table, is_ordered=False)
 
@@ -590,3 +603,4 @@ class ApplyCouponView(APIView):
                 "table_num": table.table_num
             }
         }, status=HTTP_200_OK)
+        

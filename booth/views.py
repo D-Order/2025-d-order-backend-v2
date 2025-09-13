@@ -207,6 +207,7 @@ class TableEnterAPIView(APIView):
                 "table_status": table.status,
                 "remainingMinutes": remaining_minutes,
                 "expired": is_expired
+                "activated_at": table.activated_at
             }
         }, status=200)
         

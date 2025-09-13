@@ -18,6 +18,18 @@ from cart.models import *
 from order.serializers import *
 from coupon.models import *
 
+SEAT_MENU_CATEGORY = "seat"
+SEAT_FEE_CATEGORY = "seat_fee"
+
+
+def _is_first_session(table: Table, now_dt=None) -> bool:
+    """해당 테이블이 초기화된 이후 첫 주문인지 판별"""
+    entered_at = getattr(table, "entered_at", None)
+    qs = Order.objects.filter(table_id=table.id)
+    if entered_at:
+        qs = qs.filter(created_at__gte=entered_at)
+    return not qs.exists()
+
 def get_table_fee_and_type_by_booth(booth_id: int):
     m = Manager.objects.filter(booth_id=booth_id).first()
     if not m:
@@ -48,7 +60,6 @@ class OrderPasswordVerifyView(APIView):
         password = request.data.get('password')
         table_id = request.data.get('table_id')
         table_num = request.data.get('table_num')
-        # coupon_id = request.data.get('coupon_id')
         now_dt = timezone.now()
 
         if not booth_id or not str(booth_id).isdigit():
@@ -85,6 +96,16 @@ class OrderPasswordVerifyView(APIView):
         if not cart_menus and not cart_sets:
             return Response({"status": "error", "code": 400, "message": "장바구니가 비어 있습니다."}, status=400)
 
+        # 5️⃣ 첫 주문이라면 seat_fee 필수
+        if _is_first_session(table, now_dt):
+            seat_fee_menu = Menu.objects.filter(booth=booth, menu_category=SEAT_FEE_CATEGORY).first()
+            has_seat_fee = any(cm.menu_id == seat_fee_menu.id for cm in cart_menus) if seat_fee_menu else False
+            if not has_seat_fee:
+                return Response(
+                    {"status": "error", "code": 400, "message": "첫 주문에는 테이블 이용료를 포함해야 합니다."},
+                    status=400
+                )
+            
         try:
             with transaction.atomic():
                 order = Order.objects.create(
@@ -93,7 +114,7 @@ class OrderPasswordVerifyView(APIView):
                     order_amount=0,
                 )
 
-                subtotal = 0
+                subtotal, table_fee = 0, 0
 
                 for cm in cart_menus:
                     menu = get_object_or_404(Menu, pk=cm.menu_id)
@@ -108,7 +129,10 @@ class OrderPasswordVerifyView(APIView):
                         quantity=cm.quantity,
                         fixed_price=menu.menu_price,
                     )
-                    subtotal += menu.menu_price * cm.quantity
+                    if menu.menu_category == SEAT_FEE_CATEGORY:
+                        table_fee += menu.menu_price * cm.quantity
+                    else:
+                        subtotal += menu.menu_price * cm.quantity
 
                 for cs in cart_sets:
                     setmenu = get_object_or_404(SetMenu, pk=cs.set_menu_id)
@@ -125,62 +149,52 @@ class OrderPasswordVerifyView(APIView):
                         mobj.menu_amount -= need
                         mobj.save()
 
-                    OrderSetMenu.objects.create(
+                    osm = OrderSetMenu.objects.create(
                         order=order,
                         set_menu=setmenu,
                         quantity=cs.quantity,
                         fixed_price=setmenu.set_price,
                     )
+                    for smi in sm_items:
+                        OrderMenu.objects.create(
+                            order=order,
+                            menu=smi.menu,
+                            quantity=smi.quantity * cs.quantity,
+                            fixed_price=smi.menu.menu_price,
+                            ordersetmenu=osm   # ✅ 세트 소속으로 기록
+                        )    
                     subtotal += setmenu.set_price * cs.quantity
+    
 
-                table_fee = 0
-                if is_first_order_for_table_session(table_id=table.id, booth_id=booth.id, now_dt=now_dt):
-                    base_fee, seat_mode = get_table_fee_and_type_by_booth(booth.id)
-                    if seat_mode == "person":
-                        person_qty = request.data.get("people_count", 0)
-                        table_fee = max(0, int(base_fee)) * int(person_qty)
-                    elif seat_mode == "table":
-                        table_fee = max(0, int(base_fee))
+                 # ── 7. 쿠폰 적용 (선택적) ──
+                coupon_discount, applied_coupon_code = 0, None
+                coupon_code = CouponCode.objects.filter(issued_to_table=table, used_at__isnull=True).select_related("coupon").first()
+                if coupon_code:
+                    applied_coupon_code = coupon_code.code
+                    cpn = coupon_code.coupon
+                    pre_discount_total = subtotal + table_fee
+                    if cpn.discount_type.lower() == "percent":
+                        coupon_discount = min(int(pre_discount_total * cpn.discount_value / 100), pre_discount_total)
+                    else:  # 정액
+                        coupon_discount = min(int(cpn.discount_value), pre_discount_total)
 
-                # coupon_applied = False
-                # coupon_discount = 0
-                # coupon_info = None
-                # if coupon_id is not None:
-                #     coupon = Coupon.objects.filter(pk=coupon_id, booth_id=booth.id).first()
-                #     if not coupon:
-                #         return Response({"status": "error", "code": 404, "message": "쿠폰을 찾을 수 없습니다."}, status=404)
-                #     if (coupon.quantity or 0) <= 0:
-                #         return Response({"status": "error", "code": 400, "message": "해당 쿠폰은 더 이상 사용할 수 없습니다."}, status=400)
-                #     pre_discount_total = subtotal + table_fee
-                #     dtype = (coupon.discount_type or "").lower()
-                #     dval = int(coupon.discount_value or 0)
-                #     if dtype in ("percent", "percentage", "pct"):
-                #         pct = max(0, min(100, dval))
-                #         coupon_discount = (pre_discount_total * pct) // 100
-                #     elif dtype in ("amount", "fixed", "won"):
-                #         coupon_discount = max(0, dval)
-                #     else:
-                #         return Response({"status": "error", "code": 400, "message": "알 수 없는 쿠폰 타입입니다."}, status=400)
-                #     coupon_discount = min(coupon_discount, pre_discount_total)
-                #     coupon_applied = coupon_discount > 0
-                #     coupon_info = {"coupon_id": coupon.id, "coupon_name": coupon.coupon_name}
+                    # 쿠폰 소모 처리
+                    coupon_code.used_at = now_dt
+                    coupon_code.issued_to_table = None
+                    coupon_code.save(update_fields=['used_at', 'issued_to_table'])
+                    cpn.quantity = (cpn.quantity or 0) - 1
+                    cpn.save(update_fields=['quantity'])
+                    TableCoupon.objects.filter(table=table, coupon=cpn, used_at__isnull=True).update(used_at=now_dt)
+                    
+                total_price = subtotal + table_fee - coupon_discount
+                if total_price < 0:
+                    total_price = 0
 
-                order_amount = subtotal + table_fee 
-                if order_amount < 0:
-                    order_amount = 0
-                order.order_amount = order_amount
+                order.order_amount = total_price
                 order.save()
 
-                # if coupon_applied:
-                #     coupon.quantity = (coupon.quantity or 0) - 1
-                #     coupon.save()
-                #     TableCoupon.objects.create(
-                #         table_id=table.id,
-                #         coupon_id=coupon.id,
-                #         used_at=now_dt
-                #     )
-
-                booth.total_revenues = (booth.total_revenues or 0) + order_amount
+                
+                booth.total_revenues = (booth.total_revenues or 0) + total_price
                 booth.save()
 
                 CartMenu.objects.filter(cart=cart).delete()
@@ -220,8 +234,8 @@ class OrderPasswordVerifyView(APIView):
                         "order_amount": order.order_amount,
                         "subtotal": subtotal,
                         "table_fee": table_fee,
-                        # "coupon_discount": coupon_discount,
-                        # "coupon": coupon_info,
+                        "coupon_discount": coupon_discount,
+                        "coupon": coupon_code,
                         "booth_total_revenues": booth.total_revenues
                     }
                 }, status=201)
@@ -252,41 +266,53 @@ class TableOrderListView(APIView):
         if not table:
             return Response({"status": "error", "code": 404, "message": "해당 테이블을 찾을 수 없습니다."}, status=404)
 
-        entered_at = getattr(table, "entered_at", None)
+        activated_at = getattr(table, "activated_at", None)
         valid_orders = Order.objects.filter(table=table)
-        if entered_at:
-            valid_orders = valid_orders.filter(created_at__gte=entered_at)
+        if activated_at:
+            valid_orders = valid_orders.filter(created_at__gte=table.activated_at)
 
-        order_menus = OrderMenu.objects.filter(order__in=valid_orders).select_related("menu", "order")
-        order_set_menus = OrderSetMenu.objects.filter(order__in=valid_orders).select_related("set_menu", "order")
+        # ✅ OrderMenu만 조회 (세트 포함)
+        order_menus = OrderMenu.objects.filter(order__in=valid_orders).select_related(
+            "menu", "order", "ordersetmenu", "ordersetmenu__set_menu"
+        )
 
         expanded = []
-
+        total_amount = 0
+        
         for om in order_menus:
-            row = OrderMenuSerializer(om).data
-            row["from_set"] = False
-            if isinstance(row.get("created_at"), timezone.datetime):
-                row["created_at"] = row["created_at"].isoformat()
-            expanded.append(row)
+            row = {
+                "id": om.id,
+                "order_id": om.order_id,
+                "menu_id": om.menu_id,
+                "menu_name": om.menu.menu_name,
+                "menu_price": float(om.menu.menu_price),
+                "fixed_price": om.fixed_price,
+                "quantity": om.quantity,
+                "order_status": om.order.order_status,
+                "created_at": om.order.created_at.isoformat(),
+                "updated_at": om.order.updated_at.isoformat(),
+                "order_amount": om.order.order_amount,
+                "table_num": om.order.table.table_num,
+                "menu_image": om.menu.menu_image.url if om.menu.menu_image else None,
+                "menu_category": om.menu.menu_category,
+                "from_set": om.ordersetmenu_id is not None,
+                "set_id": om.ordersetmenu_id,
+                "set_name": om.ordersetmenu.set_menu.set_name if om.ordersetmenu else None,
+            }
 
-        for osm in order_set_menus:
-            for smi in SetMenuItem.objects.filter(set_menu_id=osm.set_menu_id).select_related("menu"):
-                expanded.append({
-                    "id": None,
-                    "order": osm.order_id,
-                    "menu": smi.menu_id,
-                    "menu_name": smi.menu.menu_name,
-                    "fixed_price": smi.menu.menu_price,
-                    "quantity": smi.quantity * osm.quantity,
-                    "created_at": osm.created_at.isoformat(),
-                    "from_set": True,
-                    "set_id": osm.set_menu_id,
-                    "set_name": osm.set_menu.set_name,
-                })
+            total_amount += om.fixed_price * om.quantity
+            expanded.append(row)
 
         expanded.sort(key=lambda x: x["created_at"])
 
-        return Response({"status": "success", "code": 200, "data": {"orders": expanded}}, status=200)
+        return Response({
+            "status": "success",
+            "code": 200,
+            "data": {
+                "order_amount": total_amount,   # ✅ 최종 합계 한 번만
+                "orders": expanded
+            }
+        }, status=200)
 
 class CallStaffAPIView(APIView):
     def post(self, request):
@@ -325,166 +351,3 @@ class CallStaffAPIView(APIView):
             "tableNumber": table.table_num,
             "data": {"message": message}
         }, status=status.HTTP_200_OK)
-
-
-class OrderCouponConfirmView(APIView):
-    """
-    POST /api/v2/order/coupon/
-    Headers: Table-ID
-    Body: { "order_check_password": "1234" }
-    """
-    def post(self, request):
-        # 1️⃣ Table-ID 헤더
-        table_id = request.headers.get('Table-ID')
-        if not table_id:
-            return Response({"status": "fail", "code": 400, "message": "Table-ID 헤더가 필요합니다."},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        table = Table.objects.filter(id=table_id).select_related('booth').first()
-        if not table:
-            return Response({"status": "fail", "code": 404, "message": "테이블을 찾을 수 없습니다."},
-                            status=status.HTTP_404_NOT_FOUND)
-
-        booth = table.booth
-        manager = Manager.objects.filter(booth=booth).first()
-        if not manager:
-            return Response({"status": "fail", "code": 404, "message": "해당 부스 운영자 정보를 찾을 수 없습니다."},
-                            status=status.HTTP_404_NOT_FOUND)
-
-        # 2️⃣ 요청 바디 검증
-        serializer = OrderCouponConfirmSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        order_password = serializer.validated_data.get("order_check_password")
-        people_count = serializer.validated_data.get("people_count", 0)
-        now_dt = timezone.now()
-
-        # 3️⃣ 비밀번호 확인 (Manager.order_check_password와 비교)
-        if str(order_password) != str(manager.order_check_password):
-            return Response({"status": "error", "code": 401, "message": "비밀번호가 일치하지 않습니다."}, status=401)
-
-        # 3️⃣ 활성 Cart
-        cart = Cart.objects.filter(table=table, is_ordered=False).first()
-        if not cart:
-            return Response({"status": "error", "code": 404, "message": "주문 가능한 장바구니가 없습니다."}, status=404)
-
-        cart_menus = list(CartMenu.objects.filter(cart=cart))
-        cart_sets = list(CartSetMenu.objects.filter(cart=cart))
-        if not cart_menus and not cart_sets:
-            return Response({"status": "error", "code": 400, "message": "장바구니가 비어 있습니다."}, status=400)
-
-        # 4️⃣ 쿠폰코드 조회 (예약된 것)
-        coupon_code = CouponCode.objects.filter(issued_to_table=table, used_at__isnull=True).select_related('coupon').first()
-        coupon_used = False
-        applied_coupon_code = None
-
-        try:
-            with transaction.atomic():
-                order = Order.objects.create(
-                    table_id=table.id,
-                    order_status="pending",
-                    order_amount=0,
-                )
-
-                subtotal = 0
-                for cm in cart_menus:
-                    menu = get_object_or_404(Menu, pk=cm.menu_id)
-                    if menu.menu_amount < cm.quantity:
-                        raise ValueError(f"'{menu.menu_name}' 재고 부족")
-                    menu.menu_amount -= cm.quantity
-                    menu.save()
-
-                    OrderMenu.objects.create(
-                        order=order,
-                        menu=menu,
-                        quantity=cm.quantity,
-                        fixed_price=menu.menu_price,
-                    )
-                    subtotal += menu.menu_price * cm.quantity
-
-                for cs in cart_sets:
-                    setmenu = get_object_or_404(SetMenu, pk=cs.set_menu_id)
-                    sm_items = SetMenuItem.objects.filter(set_menu_id=setmenu.pk)
-                    for smi in sm_items:
-                        need = smi.quantity * cs.quantity
-                        mobj = get_object_or_404(Menu, pk=smi.menu_id)
-                        if mobj.menu_amount < need:
-                            raise ValueError(f"세트 '{setmenu.set_name}' 구성 '{mobj.menu_name}' 재고 부족")
-                    for smi in sm_items:
-                        need = smi.quantity * cs.quantity
-                        mobj = get_object_or_404(Menu, pk=smi.menu_id)
-                        mobj.menu_amount -= need
-                        mobj.save()
-
-                    OrderSetMenu.objects.create(
-                        order=order,
-                        set_menu=setmenu,
-                        quantity=cs.quantity,
-                        fixed_price=setmenu.set_price,
-                    )
-                    subtotal += setmenu.set_price * cs.quantity
-
-                table_fee = 0
-                # if is_first_order_for_table_session(table_id=table.id, booth_id=booth.id, now_dt=now_dt):
-                #     base_fee, seat_mode = get_table_fee_and_type_by_booth(booth.id)
-                #     if seat_mode == "person":
-                #         person_qty = request.data.get("people_count", 0)
-                #         table_fee = max(0, int(base_fee)) * int(person_qty)
-                #     elif seat_mode == "table":
-                #         table_fee = max(0, int(base_fee))
-
-                # 5️⃣ 쿠폰 할인 계산
-                coupon_discount = 0
-                if coupon_code:
-                    applied_coupon_code = coupon_code.code
-                    cpn = coupon_code.coupon
-                    pre_discount_total = subtotal + table_fee
-                    dtype = cpn.discount_type.lower()
-                    dval = cpn.discount_value
-                    if dtype == 'percent':
-                        coupon_discount = int(pre_discount_total * (1 - dval / 100))
-                        coupon_discount = pre_discount_total - coupon_discount
-                    else:  # amount
-                        coupon_discount = min(int(dval), pre_discount_total)
-                    coupon_used = True
-
-                total_price = subtotal + table_fee - coupon_discount
-                if total_price < 0:
-                    total_price = 0
-                order.order_amount = total_price
-                order.save()
-
-                # 6️⃣ 쿠폰 실제 사용 처리
-                if coupon_used and coupon_code:
-                    # 쿠폰코드 사용 완료 처리
-                    coupon_code.used_at = now_dt
-                    coupon_code.issued_to_table = None
-                    coupon_code.save(update_fields=['used_at', 'issued_to_table'])
-                    # 쿠폰 수량 감소
-                    cpn.quantity = (cpn.quantity or 0) - 1
-                    cpn.save(update_fields=['quantity'])
-                    # TableCoupon도 used_at 기록
-                    TableCoupon.objects.filter(table=table, coupon=cpn, used_at__isnull=True).update(used_at=now_dt)
-
-                booth.total_revenues = (booth.total_revenues or 0) + total_price
-                booth.save()
-
-                CartMenu.objects.filter(cart=cart).delete()
-                CartSetMenu.objects.filter(cart=cart).delete()
-                cart.is_ordered = True
-                cart.save()
-
-                return Response({
-                    "status": "success",
-                    "code": 201,
-                    "data": {
-                        "order_id": order.pk,
-                        "total_price": total_price,
-                        "coupon_used": coupon_used,
-                        "coupon_code": applied_coupon_code
-                    }
-                }, status=201)
-
-        except ValueError as e:
-            return Response({"status": "error", "code": 400, "message": str(e)}, status=400)
-        except Exception as e:
-            return Response({"status": "error", "code": 500, "message": "주문 생성 중 오류가 발생했습니다."}, status=500)

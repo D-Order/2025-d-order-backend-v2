@@ -29,6 +29,13 @@ class OrderMenu(models.Model):
     menu = models.ForeignKey(Menu, on_delete=models.CASCADE)
     quantity = models.IntegerField()
     fixed_price = models.IntegerField() # 주문 당시 실제 가격임. 헷갈리지 말 것!
+    ordersetmenu = models.ForeignKey(
+        "OrderSetMenu",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="order_menus"
+    )  # ✅ 세트 구성품이면 소속 세트 기록
 
     def __str__(self):
         return f"OrderMenu #{self.pk} - {self.menu.menu_name} x{self.quantity}"

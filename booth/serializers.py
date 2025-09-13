@@ -82,6 +82,16 @@ class TableOrderSetMenuSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderSetMenu
         fields = ['menu_image', 'menu_name', 'quantity', 'price']
+        
+        def get_menu_name(self, obj):
+        if obj.menu.menu_category == "seat_fee":
+            return "테이블 이용료"
+        return obj.menu.menu_name
+
+    def get_menu_image(self, obj):
+        if obj.menu.menu_image and hasattr(obj.menu.menu_image, 'url'):
+            return obj.menu.menu_image.url
+        return None
 
 # class TableOrderFeeSerializer(serializers.ModelSerializer):
 #     menu_name = serializers.SerializerMethodField()
