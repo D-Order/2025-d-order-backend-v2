@@ -5,13 +5,15 @@ from asgiref.sync import sync_to_async
 from django.utils import timezone
 from datetime import timedelta
 from statistic.utils import push_statistics
+
 from manager.models import Manager
+from order.models import Order
+from order.utils.order_broadcast import expand_order
 
 try:
-    from manager.models import Manager
     from booth.models import Table
 except ImportError as e:
-    logging.critical(f"Critical: Failed to import models at the top of consumers.py: {e}")
+    logging.critical(f"Critical: Failed to import Table model in consumers.py: {e}")
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +74,14 @@ def get_table_statuses(user):
         logger.error(f"Error fetching or processing table statuses for manager {manager}: {e}", exc_info=True)
         raise
 
+@sync_to_async(thread_sensitive=True)
+def get_all_orders(booth):
+    orders = []
+    qs = Order.objects.filter(table__booth=booth)
+    for order in qs:
+        orders.extend(expand_order(order))
+    return orders
+
 
 # 주문 웹소켓
 class OrderConsumer(AsyncWebsocketConsumer):
@@ -83,13 +93,23 @@ class OrderConsumer(AsyncWebsocketConsumer):
             return await self.close(code=4001)
 
         try:
-            self.manager, self.booth = await get_manager_and_booth(user)  # ✅ booth 저장
+            self.manager, self.booth = await get_manager_and_booth(user)
             if not self.manager or not self.booth:
                 return await self.close(code=4003)
 
             self.room_group_name = f"booth_{self.booth.id}_orders"
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
             await self.accept()
+
+            # 최초 접속 시 snapshot 내려줌
+            orders = await get_all_orders(self.booth)
+            await self.send(text_data=json.dumps({
+                "type": "ORDER_SNAPSHOT",
+                "data": {
+                    "total_revenue": self.booth.total_revenues,
+                    "orders": orders
+                }
+            }))
 
             logger.info(f"OrderConsumer: Connected for booth {self.booth.id}")
         except Exception as e:
@@ -109,15 +129,23 @@ class OrderConsumer(AsyncWebsocketConsumer):
                     {"type": "new_order", "data": data["data"]}
                 )
 
-                # lazy import로 꼬임 방지
-                from statistic.utils import push_statistics  
+                # lazy import (순환 방지)
+                from statistic.utils import push_statistics
                 push_statistics(self.booth.id)
         except Exception as e:
             logger.error(f"OrderConsumer receive error: {e}", exc_info=True)
 
     async def new_order(self, event):
+        """NEW_ORDER 이벤트 브로드캐스트"""
         await self.send(text_data=json.dumps({
             "type": "NEW_ORDER",
+            "data": event["data"]
+        }))
+
+    async def order_update(self, event):
+        """broadcast_order_update 에서 호출됨"""
+        await self.send(text_data=json.dumps({
+            "type": "ORDER_UPDATE",
             "data": event["data"]
         }))
 

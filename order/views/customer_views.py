@@ -9,6 +9,7 @@ from django.utils import timezone
 from datetime import timedelta
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from order.utils.order_broadcast import broadcast_order_update
 
 from order.models import *
 from menu.models import *
@@ -81,7 +82,7 @@ class OrderPasswordVerifyView(APIView):
                 }
             }, status=200)
 
-        # ✅ seat_type 이 PP인 경우 → seat_fee 수량 불러오기
+        # seat_type 이 PP인 경우 → seat_fee 수량 불러오기
         seat_count = None
         if manager.seat_type == "PP":
             seat_fee_menu = Menu.objects.filter(
@@ -99,7 +100,7 @@ class OrderPasswordVerifyView(APIView):
                     menu=seat_fee_menu
                 ).aggregate(total=models.Sum("quantity"))["total"] or 0
                 
-                # ✅ 장바구니 seat_fee (아직 주문 안 된 상태)
+                # 장바구니 seat_fee (아직 주문 안 된 상태)
                 cart = Cart.objects.filter(table=table, is_ordered=False).order_by("-created_at").first()
                 cart_seat_count = 0
                 if cart:
@@ -110,7 +111,7 @@ class OrderPasswordVerifyView(APIView):
 
                 seat_count = ordered_seat_count + cart_seat_count
 
-        # ✅ 가장 최근 주문 금액 불러오기 (활성화 구간 이후만)
+        # 가장 최근 주문 금액 불러오기 (활성화 구간 이후만)
         latest_order = Order.objects.filter(
             table=table,
             created_at__gte=activated_at
@@ -170,7 +171,7 @@ class OrderPasswordVerifyView(APIView):
         if not cart_menus and not cart_sets:
             return Response({"status": "error", "code": 400, "message": "장바구니가 비어 있습니다."}, status=400)
 
-        # 5️⃣ 첫 주문이라면 seat_fee 필수
+        # 첫 주문이라면 seat_fee 필수
         if _is_first_session(table, now_dt):
             if manager.seat_type not in ["NO", None]:  # 🚨 좌석 요금이 있는 경우에만 체크
                 seat_fee_menu = Menu.objects.filter(booth=booth, menu_category=SEAT_FEE_CATEGORY).first()
@@ -192,6 +193,7 @@ class OrderPasswordVerifyView(APIView):
 
                 subtotal, table_fee = 0, 0
 
+                # 일반 메뉴 장바구니 처리
                 for cm in cart_menus:
                     menu = get_object_or_404(Menu, pk=cm.menu_id)
                     if menu.menu_amount < cm.quantity:
@@ -211,20 +213,22 @@ class OrderPasswordVerifyView(APIView):
                     else:
                         subtotal += menu.menu_price * cm.quantity
 
+                # 세트메뉴 장바구니 처리
                 for cs in cart_sets:
                     setmenu = get_object_or_404(SetMenu, pk=cs.set_menu_id)
                     sm_items = SetMenuItem.objects.filter(set_menu_id=setmenu.pk)
 
+                    # 재고 확인
                     for smi in sm_items:
                         need = smi.quantity * cs.quantity
-                        mobj = get_object_or_404(Menu, pk=smi.menu_id)
-                        if mobj.menu_amount < need:
-                            raise ValueError(f"세트 '{setmenu.set_name}' 구성 '{mobj.menu_name}' 재고 부족")
+                        if smi.menu.menu_amount < need:
+                            raise ValueError(f"세트 '{setmenu.set_name}' 구성 '{smi.menu.menu_name}' 재고 부족")
+
+                    # 재고 차감
                     for smi in sm_items:
                         need = smi.quantity * cs.quantity
-                        mobj = get_object_or_404(Menu, pk=smi.menu_id)
-                        mobj.menu_amount -= need
-                        mobj.save()
+                        smi.menu.menu_amount -= need
+                        smi.menu.save()
 
                     osm = OrderSetMenu.objects.create(
                         order=order,
@@ -239,31 +243,33 @@ class OrderPasswordVerifyView(APIView):
                             menu=smi.menu,
                             quantity=smi.quantity * cs.quantity,
                             fixed_price=smi.menu.menu_price,
-                            ordersetmenu=osm   # ✅ 세트 소속으로 기록
-                        )    
+                            ordersetmenu=osm
+                        )
                     subtotal += setmenu.set_price * cs.quantity
-    
 
-                 # ── 7. 쿠폰 적용 (선택적) ──
+                # 쿠폰 처리
                 coupon_discount, applied_coupon_code = 0, None
-                coupon_code = CouponCode.objects.filter(issued_to_table=table, used_at__isnull=True).select_related("coupon").first()
+                coupon_code = CouponCode.objects.filter(
+                    issued_to_table=table,
+                    used_at__isnull=True
+                ).select_related("coupon").first()
+
                 if coupon_code:
                     applied_coupon_code = coupon_code.code
                     cpn = coupon_code.coupon
                     pre_discount_total = subtotal + table_fee
                     if cpn.discount_type.lower() == "percent":
                         coupon_discount = min(int(pre_discount_total * cpn.discount_value / 100), pre_discount_total)
-                    else:  # 정액
+                    else:
                         coupon_discount = min(int(cpn.discount_value), pre_discount_total)
 
-                    # 쿠폰 소모 처리
                     coupon_code.used_at = now_dt
                     coupon_code.issued_to_table = None
                     coupon_code.save(update_fields=['used_at', 'issued_to_table'])
                     cpn.quantity = (cpn.quantity or 0) - 1
                     cpn.save(update_fields=['quantity'])
                     TableCoupon.objects.filter(table=table, coupon=cpn, used_at__isnull=True).update(used_at=now_dt)
-                    
+
                 total_price = subtotal + table_fee - coupon_discount
                 if total_price < 0:
                     total_price = 0
@@ -271,37 +277,21 @@ class OrderPasswordVerifyView(APIView):
                 order.order_amount = total_price
                 order.save()
 
-                
                 booth.total_revenues = (booth.total_revenues or 0) + total_price
                 booth.save()
 
+                # 장바구니 정리
                 CartMenu.objects.filter(cart=cart).delete()
                 CartSetMenu.objects.filter(cart=cart).delete()
                 cart.is_ordered = True
                 cart.save()
 
-                # 주문 성공 후 WebSocket 브로드캐스트 추가
-                from asgiref.sync import async_to_sync
-                from channels.layers import get_channel_layer
-                channel_layer = get_channel_layer()
-                async_to_sync(channel_layer.group_send)(
-                    f"booth_{booth.id}_orders",
-                    {
-                        "type": "new_order",
-                        "data": {
-                            "order_id": order.pk,
-                            "table_num": table.table_num,
-                            "items": [
-                                {"menu_name": cm.menu.menu_name, "quantity": cm.quantity}
-                                for cm in cart_menus
-                            ] + [
-                                {"set_name": cs.set_menu.set_name, "quantity": cs.quantity}
-                                for cs in cart_sets
-                            ],
-                            "order_amount": order.order_amount
-                        }
-                    }
-                )
+                # 주문 성공 후 운영자 페이지에 브로드캐스트
+                broadcast_order_update(order)
+
+                ### 수정: 주문 생성 후 통계 업데이트 추가
+                from statistic.utils import push_statistics
+                push_statistics(booth.id)
 
                 return Response({
                     "status": "success",
@@ -328,7 +318,6 @@ class OrderPasswordVerifyView(APIView):
                 {"status": "error", "code": 500, "message": str(e)},
                 status=500
             )
-
 
 class TableOrderListView(APIView):
     def get(self, request, table_num):
