@@ -469,7 +469,7 @@ class OrderRevertStatusView(APIView):
             "data": {
                 "order_item_id": obj.id,   ### 수정: 필드명 통일
                 "prev_status": prev_status,
-                "new_status": target_status
+                "new_status": target_status,
                 "table_num": obj.order.table.table_num
             }
         }, status=200)
