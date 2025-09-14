@@ -231,6 +231,7 @@ class OrderCancelView(APIView):
                             "rest_quantity": osm.quantity if osm.id else 0,
                             "restored_stock": cancel_qty,
                             "refund": refund_amount,
+                            "table_num": order.table.table_num
                         })
                         continue
 
@@ -335,6 +336,7 @@ class KitchenOrderCookedView(APIView):
 
         # 직렬화 (중복 제거)
         data = OrderMenuSerializer(obj).data if isinstance(obj, OrderMenu) else OrderSetMenuSerializer(obj).data
+        data["table_num"] = obj.order.table.table_num
 
         # 조리 상태 변경 → 모든 페이지 동기화 필요
         broadcast_order_update(obj.order)
@@ -468,5 +470,6 @@ class OrderRevertStatusView(APIView):
                 "order_item_id": obj.id,   ### 수정: 필드명 통일
                 "prev_status": prev_status,
                 "new_status": target_status
+                "table_num": obj.order.table.table_num
             }
         }, status=200)

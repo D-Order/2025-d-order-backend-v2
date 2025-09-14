@@ -278,3 +278,38 @@ class BoothAllMenusViewSet(viewsets.ViewSet):
             "message": "부스 메뉴 목록(메뉴, 세트메뉴, 테이블이용료)이 성공적으로 조회되었습니다.",
             "data": data
         }, status=200)
+
+class BoothMenuNamesViewSet(viewsets.ViewSet):
+    """부스 내 개별 메뉴 이름만 조회 (드롭다운용, 세트메뉴는 풀어서 개별 메뉴 노출)"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def list(self, request):
+        user = request.user
+        manager = getattr(user, 'manager_profile', None)
+        if manager is None:
+            return Response({
+                "status": 403,
+                "message": "운영진만 접근할 수 있습니다.",
+                "data": None
+            }, status=403)
+
+        booth = manager.booth
+
+        # 일반 메뉴 이름
+        menu_names = list(Menu.objects.filter(booth=booth).values_list("menu_name", flat=True))
+
+        # 세트메뉴 구성품 → 풀어서 이름 추출
+        set_item_names = list(
+            SetMenuItem.objects.filter(set_menu__booth=booth)
+            .select_related("menu")
+            .values_list("menu__menu_name", flat=True)
+        )
+
+        # 중복 제거 + 정렬 (필요하다면)
+        all_names = sorted(set(menu_names + set_item_names))
+
+        return Response({
+            "status": 200,
+            "message": "부스 내 드롭다운용 메뉴 이름이 조회되었습니다.",
+            "data": all_names
+        }, status=200)
