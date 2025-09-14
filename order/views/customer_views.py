@@ -98,13 +98,16 @@ class OrderPasswordVerifyView(APIView):
 
         # 5️⃣ 첫 주문이라면 seat_fee 필수
         if _is_first_session(table, now_dt):
-            seat_fee_menu = Menu.objects.filter(booth=booth, menu_category=SEAT_FEE_CATEGORY).first()
-            has_seat_fee = any(cm.menu_id == seat_fee_menu.id for cm in cart_menus) if seat_fee_menu else False
-            if not has_seat_fee:
-                return Response(
-                    {"status": "error", "code": 400, "message": "첫 주문에는 테이블 이용료를 포함해야 합니다."},
-                    status=400
-                )
+            if manager.seat_type not in ["NO", None]:  # 🚨 좌석 요금이 있는 경우에만 체크
+                seat_fee_menu = Menu.objects.filter(booth=booth, menu_category=SEAT_FEE_CATEGORY).first()
+                if seat_fee_menu:  # 🚨 메뉴가 있을 때만 검사
+                    has_seat_fee = any(cm.menu_id == seat_fee_menu.id for cm in cart_menus)
+                    if not has_seat_fee:
+                        return Response(
+                            {"status": "error", "code": 400, "message": "첫 주문에는 테이블 이용료를 포함해야 합니다."},
+                            status=400
+                        )
+
             
         try:
             with transaction.atomic():
@@ -281,9 +284,15 @@ class TableOrderListView(APIView):
         )
 
         expanded = []
-        
+
+        # ✅ 단품 (세트 소속 아닌 것만)
+        order_menus = OrderMenu.objects.filter(
+            order__in=valid_orders, ordersetmenu__isnull=True
+        ).select_related("menu", "order").order_by("-order__created_at")
+
         for om in order_menus:
             row = {
+                "type": "menu",
                 "id": om.id,
                 "order_id": om.order_id,
                 "menu_id": om.menu_id,
@@ -298,13 +307,35 @@ class TableOrderListView(APIView):
                 "table_num": om.order.table.table_num,
                 "menu_image": om.menu.menu_image.url if om.menu.menu_image else None,
                 "menu_category": om.menu.menu_category,
-                "from_set": om.ordersetmenu_id is not None,
-                "set_id": om.ordersetmenu_id,
-                "set_name": om.ordersetmenu.set_menu.set_name if om.ordersetmenu else None,
             }
             expanded.append(row)
 
-        expanded.sort(key=lambda x: x["created_at"])
+        # ✅ 세트 메뉴
+        order_sets = OrderSetMenu.objects.filter(
+            order__in=valid_orders
+        ).select_related("set_menu", "order").order_by("-order__created_at")
+
+        for osm in order_sets:
+            row = {
+                "type": "setmenu",
+                "id": osm.id,
+                "order_id": osm.order_id,
+                "set_id": osm.set_menu_id,
+                "set_name": osm.set_menu.set_name,
+                "set_price": osm.set_menu.set_price,
+                "fixed_price": osm.fixed_price,
+                "quantity": osm.quantity,
+                "status": osm.status,
+                "created_at": osm.order.created_at.isoformat(),
+                "updated_at": osm.order.updated_at.isoformat(),
+                "order_amount": osm.order.order_amount,
+                "table_num": osm.order.table.table_num,
+                "set_image": osm.set_menu.set_image.url if osm.set_menu.set_image else None,
+            }
+            expanded.append(row)
+
+        # # ✅ 최신순 정렬
+        # expanded.sort(key=lambda x: x["created_at"], reverse=True)
 
         return Response({
             "status": "success",

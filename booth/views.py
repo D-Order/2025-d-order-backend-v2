@@ -351,8 +351,8 @@ class TableDetailView(APIView):
             data["created_at"] = osm.order.created_at
             orders_json.append(data)
 
-        # ✅ 최신순 정렬
-        orders_json = sorted(orders_json, key=lambda x: x["created_at"], reverse=True)
+        # # ✅ 최신순 정렬
+        # orders_json = sorted(orders_json, key=lambda x: x["created_at"], reverse=True)
 
         # created_at은 최종 응답에서 필요 없으면 제거
         for item in orders_json:
