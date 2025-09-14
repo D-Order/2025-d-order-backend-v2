@@ -237,26 +237,38 @@ class BoothAllMenusViewSet(viewsets.ViewSet):
 
         booth = manager.booth
 
-        # 테이블이용료 정보
-        table_info = []
-        if manager.seat_type == "PP":
-            table_info = {
-                "seat_type": "person",
-                "seat_tax_person": manager.seat_tax_person
-            }
-        elif manager.seat_type == "PT":
-            table_info = {
-                "seat_type": "table",
-                "seat_tax_table": manager.seat_tax_table
-            }
-        # seat_type == "NO"면 table_info 그대로 [] (빈배열)
+        # ✅ 테이블 이용료 정보
+        table_info = None
+        try:
+            manager = Manager.objects.get(booth=booth)
+            seat_fee_menu = Menu.objects.filter(booth=booth, menu_category="seat_fee").first()
+            if manager.seat_type == "PP" and seat_fee_menu:
+                table_info = {
+                    "seat_type": "person",
+                    "seat_tax_person": manager.seat_tax_person,
+                    "menu_id": seat_fee_menu.id
+                }
+            elif manager.seat_type == "PT" and seat_fee_menu:
+                table_info = {
+                    "seat_type": "table",
+                    "seat_tax_table": manager.seat_tax_table,
+                    "menu_id": seat_fee_menu.id
+                }
+        except Manager.DoesNotExist:
+            table_info = None
 
+        category = request.GET.get('category')
+        menus_qs = Menu.objects.filter(booth=booth)
+        setmenus_qs = SetMenu.objects.filter(booth=booth)
+        if category:
+            menus_qs = menus_qs.filter(menu_category=category)
+            setmenus_qs = setmenus_qs.filter(set_category=category)
         menus = MenuSerializer(Menu.objects.filter(booth=booth), many=True, context={"request": request}).data
         setmenus = SetMenuSerializer(SetMenu.objects.filter(booth=booth), many=True, context={"request": request}).data
 
         data = {
             "booth_id": booth.pk,
-            "table": table_info if table_info else [],  # 없으면 항상 []로 반환!
+            "table": table_info,
             "menus": menus,
             "setmenus": setmenus,
         }

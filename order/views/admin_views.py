@@ -41,126 +41,6 @@ def is_first_order_for_table_session(order: Order) -> bool:
     first = qs.order_by("created_at").first()
     return first and first.id == order.id
 
-# class OrderCancelView(APIView):
-#     def patch(self, request, order_id):
-#         order = get_object_or_404(Order, pk=order_id)
-
-#         if order.order_status != "pending":
-#             return Response(
-#                 {"status": "error", "code": 400, "message": "이미 조리 중이거나 완료된 주문은 취소할 수 없습니다."},
-#                 status=400
-#             )
-
-#         cancel_items = request.data.get("cancel_items", [])
-
-#         try:
-#             with transaction.atomic():
-#                 refund_price = 0
-
-#                 for item in cancel_items:
-#                     oid = item.get("order_item_id")
-#                     qty = item.get("quantity", 0)  # 0 → 전량 취소
-
-#                     if not oid or qty is None or qty < 0:
-#                         raise ValueError("요청 형식이 잘못되었습니다.")
-
-#                     # 1️⃣ OrderMenu 먼저 찾기
-#                     om = (
-#                         OrderMenu.objects
-#                         .filter(order_id=order.id, id=oid)
-#                         .select_related("menu")
-#                         .first()
-#                     )
-#                     if om:
-#                         cancel_qty = om.quantity if qty == 0 else qty
-#                         if cancel_qty > om.quantity:
-#                             raise ValueError("요청 수량이 현재 수량을 초과합니다.")
-
-#                         om.quantity -= cancel_qty
-#                         if om.quantity <= 0:
-#                             om.delete()
-#                         else:
-#                             om.save()
-
-#                         # 재고 복구
-#                         menu = om.menu
-#                         menu.menu_amount += cancel_qty
-#                         menu.save()
-
-#                         refund_price += int(om.fixed_price) * int(cancel_qty)
-#                         continue
-
-#                     # 2️⃣ OrderSetMenu 찾기
-#                     osm = (
-#                         OrderSetMenu.objects
-#                         .filter(order_id=order.id, id=oid)
-#                         .select_related("set_menu")
-#                         .first()
-#                     )
-#                     if not osm:
-#                         raise ValueError("해당 주문 항목을 찾을 수 없습니다.")
-
-#                     cancel_qty = osm.quantity if qty == 0 else qty
-#                     if cancel_qty > osm.quantity:
-#                         raise ValueError("요청 수량이 현재 수량을 초과합니다.")
-
-#                     # 세트 구성품 감소 + 재고 복구
-#                     child_oms = (
-#                         OrderMenu.objects
-#                         .filter(ordersetmenu=osm)
-#                         .select_related("menu")
-#                     )
-#                     for child in child_oms:
-#                         smi = SetMenuItem.objects.filter(
-#                             set_menu_id=osm.set_menu_id,
-#                             menu_id=child.menu_id   # ✅ menu → menu_id
-#                         ).first()
-#                         if not smi:
-#                             continue
-
-#                         need = smi.quantity * cancel_qty
-#                         child.quantity -= need
-#                         if child.quantity <= 0:
-#                             child.delete()
-#                         else:
-#                             child.save()
-
-#                         # 재고 복구
-#                         m = child.menu
-#                         m.menu_amount += need
-#                         m.save()
-
-#                     osm.quantity -= cancel_qty
-#                     if osm.quantity <= 0:
-#                         osm.delete()
-#                     else:
-#                         osm.save()
-
-#                     refund_price += int(osm.fixed_price) * int(cancel_qty)
-
-#                 # 주문 금액/상태 업데이트
-#                 order.order_amount = max(0, (order.order_amount or 0) - refund_price)
-
-#                 has_menu = OrderMenu.objects.filter(order=order).exists()
-#                 has_set = OrderSetMenu.objects.filter(order=order).exists()
-#                 if not has_menu and not has_set:
-#                     order.order_status = "cancelled"
-
-#                 order.save()
-
-#                 booth = Booth.objects.get(pk=order.table.booth_id)
-#                 booth.total_revenues = max(0, (booth.total_revenues or 0) - refund_price)
-#                 booth.save()
-
-#                 from statistic.utils import push_statistics
-#                 push_statistics(booth.id)
-
-#         except ValueError as e:
-#             return Response({"status": "error", "code": 400, "message": str(e)}, status=400)
-
-#         return OrderListView().get(request)
-
-
 class OrderListView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -237,7 +117,7 @@ class OrderListView(APIView):
 
             expanded = [row for row in expanded if _match(row)]
 
-        expanded.sort(key=lambda x: x["created_at"])
+        expanded.sort(key=lambda x: x["created_at"], reverse=True)
 
         return Response({
             "status": "success",
