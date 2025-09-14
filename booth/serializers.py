@@ -64,6 +64,8 @@ class SimpleOrderSetMenuSerializer(serializers.ModelSerializer):
 #         return data
 
 class TableOrderMenuSerializer(serializers.ModelSerializer):
+    ordermenu_id = serializers.IntegerField(source="id", read_only=True) 
+    order_id = serializers.IntegerField(source="order.id", read_only=True)
     menu_name = serializers.CharField(source='menu.menu_name')
     menu_image = serializers.ImageField(source='menu.menu_image', allow_null=True)
     quantity = serializers.IntegerField()
@@ -71,9 +73,11 @@ class TableOrderMenuSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = OrderMenu
-        fields = ['menu_image', 'menu_name', 'quantity', 'price']
+        fields = ['ordermenu_id', 'order_id', 'menu_image', 'menu_name', 'quantity', 'price']
 
 class TableOrderSetMenuSerializer(serializers.ModelSerializer):
+    ordersetmenu_id = serializers.IntegerField(source="id", read_only=True)
+    order_id = serializers.IntegerField(source="order.id", read_only=True)
     menu_name = serializers.CharField(source='set_menu.set_name')
     menu_image = serializers.ImageField(source='set_menu.set_image', allow_null=True)
     quantity = serializers.IntegerField()
@@ -81,7 +85,7 @@ class TableOrderSetMenuSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = OrderSetMenu
-        fields = ['menu_image', 'menu_name', 'quantity', 'price']
+        fields = ['ordersetmenu_id','order_id','menu_image', 'menu_name', 'quantity', 'price']
         
     def get_menu_name(self, obj):
         if obj.menu.menu_category == "seat_fee":
