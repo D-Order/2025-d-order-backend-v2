@@ -336,6 +336,7 @@ class TableDetailView(APIView):
             data = TableOrderMenuSerializer(om).data
             if om.menu.menu_category == "seat_fee":
                 data["menu_name"] = "테이블 이용료(인당)"
+            data["order_id"] = om.order_id 
             # created_at 추가
             data["created_at"] = om.order.created_at
             orders_json.append(data)

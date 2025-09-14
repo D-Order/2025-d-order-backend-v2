@@ -211,13 +211,14 @@ class CartAddView(APIView):
 
 
 class CartMenuUpdateView(APIView):
-    def patch(self, request, menu_id):
+    def patch(self, request):
         booth_id = request.headers.get("Booth-ID")
         if not booth_id:
             return Response({"status": "fail", "message": "Booth-ID 헤더가 누락되었습니다."}, status=400)
 
         table_num = request.data.get("table_num")
         type_ = request.data.get("type")
+        menu_id = request.data.get("id")
         quantity = request.data.get("quantity")
 
         if not all([table_num, type_, quantity is not None]):
@@ -604,3 +605,51 @@ class ApplyCouponView(APIView):
             }
         }, status=HTTP_200_OK)
         
+class CouponValidateView(APIView):
+    """
+    쿠폰 코드 유효성만 검증하는 API.
+    - Booth-ID와 coupon_code만 받아 유효 여부 확인
+    - 유효하면 coupon_name, discount_type, discount_value 반환
+    - 유효하지 않으면 fail 메시지 반환
+    """
+    permission_classes = []
+
+    def post(self, request):
+        booth_id = request.headers.get("Booth-ID")
+        coupon_code_input = request.data.get("coupon_code")
+
+        if not booth_id or not coupon_code_input:
+            return Response({
+                "status": "fail",
+                "message": "Booth-ID와 coupon_code가 필요합니다."
+            }, status=HTTP_400_BAD_REQUEST)
+
+        # 쿠폰 코드 유효성 체크 (테이블 번호는 확인하지 않음)
+        coupon_code = CouponCode.objects.filter(
+            code=coupon_code_input.upper(),
+            coupon__booth_id=booth_id,
+            used_at__isnull=True
+        ).select_related('coupon').first()
+
+        if not coupon_code:
+            return Response({
+                "status": "fail",
+                "message": "사용할 수 없는 쿠폰 코드입니다."
+            }, status=HTTP_404_NOT_FOUND)
+
+        # 이미 다른 테이블에 발급된 쿠폰인지 확인(이 API에서는 안내만 함)
+        if coupon_code.issued_to_table:
+            return Response({
+                "status": "fail",
+                "message": "이미 다른 테이블에 적용된 쿠폰입니다."
+            }, status=HTTP_400_BAD_REQUEST)
+
+        return Response({
+            "status": "success",
+            "code": 200,
+            "data": {
+                "coupon_name": coupon_code.coupon.coupon_name,
+                "discount_type": coupon_code.coupon.discount_type.lower(),
+                "discount_value": coupon_code.coupon.discount_value
+            }
+        }, status=HTTP_200_OK)
