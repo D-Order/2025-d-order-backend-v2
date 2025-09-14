@@ -55,6 +55,80 @@ def is_first_order_for_table_session(table_id: int, booth_id: int, now_dt):
 
 class OrderPasswordVerifyView(APIView):
     permission_classes = []
+    def get(self, request):
+        booth_id = request.headers.get("Booth-ID")
+        table_num = request.query_params.get("table_num")
+
+        if not booth_id or not table_num:
+            return Response({
+                "status": "fail",
+                "code": 400,
+                "message": "Booth-ID 헤더와 table_num 파라미터가 필요합니다."
+            })
+
+        booth = get_object_or_404(Booth, pk=booth_id)
+        table = get_object_or_404(Table, booth=booth, table_num=table_num)
+        manager = get_object_or_404(Manager, booth=booth)
+        activated_at = table.activated_at
+        # 활성화 기록이 없으면 seat_count=0, order_amount=0
+        if not activated_at:
+            return Response({
+                "status": "success",
+                "code": 200,
+                "data": {
+                    "order_amount": 0,
+                    "seat_count": 0 if manager.seat_type == "PP" else None
+                }
+            }, status=200)
+
+        # ✅ seat_type 이 PP인 경우 → seat_fee 수량 불러오기
+        seat_count = None
+        if manager.seat_type == "PP":
+            seat_fee_menu = Menu.objects.filter(
+                booth=booth,
+                menu_category=SEAT_FEE_CATEGORY
+            ).first()
+
+            if seat_fee_menu:
+                order_qs = Order.objects.filter(
+                    table=table,
+                    created_at__gte=activated_at
+                )
+                ordered_seat_count = OrderMenu.objects.filter(
+                    order__in=order_qs,
+                    menu=seat_fee_menu
+                ).aggregate(total=models.Sum("quantity"))["total"] or 0
+                
+                # ✅ 장바구니 seat_fee (아직 주문 안 된 상태)
+                cart = Cart.objects.filter(table=table, is_ordered=False).order_by("-created_at").first()
+                cart_seat_count = 0
+                if cart:
+                    cart_seat_count = CartMenu.objects.filter(
+                        cart=cart,
+                        menu=seat_fee_menu
+                    ).aggregate(total=models.Sum("quantity"))["total"] or 0
+
+                seat_count = ordered_seat_count + cart_seat_count
+
+        # ✅ 가장 최근 주문 금액 불러오기 (활성화 구간 이후만)
+        latest_order = Order.objects.filter(
+            table=table,
+            created_at__gte=activated_at
+        ).order_by("-created_at").first()
+        latest_order_amount = latest_order.order_amount if latest_order else 0
+
+        data = {
+            "order_amount": latest_order_amount
+        }
+        if seat_count is not None:
+            data["seat_count"] = seat_count
+
+        return Response({
+            "status": "success",
+            "code": 200,
+            "data": data
+        }, status=200)
+        
     def post(self, request):
         booth_id = request.headers.get('Booth-ID')
         password = request.data.get('password')
@@ -271,11 +345,14 @@ class TableOrderListView(APIView):
             return Response({"status": "error", "code": 404, "message": "해당 테이블을 찾을 수 없습니다."}, status=404)
 
         activated_at = getattr(table, "activated_at", None)
-        valid_orders = Order.objects.filter(table=table)
+        # ✅ 활성화 시점 이후 주문만 조회, 없으면 주문 없음 처리
         if activated_at:
-            valid_orders = valid_orders.filter(created_at__gte=table.activated_at)
-            
+            valid_orders = Order.objects.filter(table=table, created_at__gte=activated_at)
+        else:
+            valid_orders = Order.objects.none()
+
         total_amount = sum(o.order_amount for o in valid_orders)
+        expanded = []
 
 
         # ✅ OrderMenu만 조회 (세트 포함)
