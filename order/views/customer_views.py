@@ -171,17 +171,23 @@ class OrderPasswordVerifyView(APIView):
         if not cart_menus and not cart_sets:
             return Response({"status": "error", "code": 400, "message": "장바구니가 비어 있습니다."}, status=400)
 
-        # 첫 주문이라면 seat_fee 필수
+        # 첫 주문이라면 seat_fee/person_fee 필수
         if _is_first_session(table, now_dt):
-            if manager.seat_type not in ["NO", None]:  # 🚨 좌석 요금이 있는 경우에만 체크
-                seat_fee_menu = Menu.objects.filter(booth=booth, menu_category=SEAT_FEE_CATEGORY).first()
-                if seat_fee_menu:  # 🚨 메뉴가 있을 때만 검사
-                    has_seat_fee = any(cm.menu_id == seat_fee_menu.id for cm in cart_menus)
-                    if not has_seat_fee:
-                        return Response(
-                            {"status": "error", "code": 400, "message": "첫 주문에는 테이블 이용료를 포함해야 합니다."},
-                            status=400
-                        )
+            if manager.seat_type == "PT":  # 🚩 테이블 단위 요금
+                seat_fee_menu = Menu.objects.filter(booth=booth, menu_category="seat_fee").first()
+                if seat_fee_menu and not any(cm.menu_id == seat_fee_menu.id for cm in cart_menus):
+                    return Response(
+                        {"status": "error", "code": 400, "message": "첫 주문에는 테이블 이용료를 포함해야 합니다."},
+                        status=400
+                    )
+
+        elif manager.seat_type == "PP":  # 🚩 인당 요금
+            person_fee_menu = Menu.objects.filter(booth=booth, menu_category="person_fee").first()
+            if person_fee_menu and not any(cm.menu_id == person_fee_menu.id for cm in cart_menus):
+                return Response(
+                    {"status": "error", "code": 400, "message": "첫 주문에는 인당 이용료를 포함해야 합니다."},
+                    status=400
+                )
 
             
         try:
