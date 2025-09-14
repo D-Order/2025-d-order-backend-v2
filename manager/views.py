@@ -138,8 +138,22 @@ class ManagerAuthAPIView(APIView):
             }
         }, status=200)
 
-        res.set_cookie("access", access_token, httponly=False, samesite="Lax", secure=False)
-        res.set_cookie("refresh", refresh_token, httponly=False, samesite="Lax", secure=False)
+        res.set_cookie(
+            "access",
+            access_token,
+            httponly=True,
+            samesite="None",
+            secure=True
+        )
+
+        # 수정 refresh token: 장기 보관용, HttpOnly 쿠키
+        res.set_cookie(
+            "refresh",
+            refresh_token,
+            httponly=True,
+            samesite="None",
+            secure=True
+        )
         return res
 
     # 토큰 확인 / 재발급
@@ -190,7 +204,13 @@ class ManagerAuthAPIView(APIView):
                         "booth_id": booth.pk
                     }
                 })
-                res.set_cookie("access", new_access, httponly=False, samesite="Lax", secure=False)
+                res.set_cookie(
+                    "access",
+                    access_token,
+                    httponly=True,
+                    samesite="None",
+                    secure=True
+                )
                 return res
 
         except jwt.InvalidTokenError:
