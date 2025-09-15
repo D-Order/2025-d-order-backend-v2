@@ -28,29 +28,30 @@ def expand_order(order: Order):
             "set_name": None,
         })
 
-    # 세트 메뉴 (SetMenuItem 단위로 쪼개서 추가)
     order_sets = OrderSetMenu.objects.filter(order=order).select_related("set_menu")
     for osm in order_sets:
-        for item in SetMenuItem.objects.filter(set_menu=osm.set_menu).select_related("menu"):
-            if item.menu.menu_category not in VISIBLE_MENU_CATEGORIES:
+        order_menus = OrderMenu.objects.filter(
+            ordersetmenu=osm
+        ).select_related("menu")
+        for om in order_menus:
+            if om.menu.menu_category not in VISIBLE_MENU_CATEGORIES:
                 continue
             expanded.append({
-                "ordermenu_id": osm.id,  # 세트랑 연결된 orderSetMenu 기준 ID
-                "order_id": osm.order_id,
-                "menu_id": item.menu_id,
-                "menu_name": item.menu.menu_name,
-                "menu_image": item.menu.menu_image.url if item.menu.menu_image else None,
-                "quantity": item.quantity * osm.quantity,
-                "status": osm.status,
-                "created_at": osm.order.created_at.isoformat(),
-                "table_num": osm.order.table.table_num,
+                "ordermenu_id": om.id,   # 세트 구성도 OrderMenu 기준으로
+                "order_id": om.order_id,
+                "menu_id": om.menu_id,
+                "menu_name": om.menu.menu_name,
+                "menu_image": om.menu.menu_image.url if om.menu.menu_image else None,
+                "quantity": om.quantity,
+                "status": om.status,
+                "created_at": om.order.created_at.isoformat(),
+                "table_num": om.order.table.table_num,
                 "from_set": True,
                 "set_id": osm.set_menu.id,
                 "set_name": osm.set_menu.set_name,
             })
 
     return expanded
-
 
 def broadcast_order_update(order: Order):
     booth = order.table.booth
