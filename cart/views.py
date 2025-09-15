@@ -59,7 +59,7 @@ class CartDetailView(APIView):
 
         # 첫 주문 여부 판별
         is_first = _is_first_session(table)
-        serializer = CartDetailSerializer(cart)
+        serializer = CartDetailSerializer(cart, context={"request": request})
 
         subtotal, table_fee = 0, 0
         for cm in CartMenu.objects.filter(cart=cart).select_related("menu"):
@@ -143,7 +143,7 @@ class CartAddView(APIView):
 
             menu_name = menu.menu_name
             menu_price = menu.menu_price
-            menu_image = menu.menu_image.url if menu.menu_image else None
+            menu_image = request.build_absolute_uri(menu.menu_image.url) if menu.menu_image else None
 
         # ------------------- 세트 메뉴 -------------------
         elif type_ == "set_menu":
@@ -155,7 +155,7 @@ class CartAddView(APIView):
                     return Response({
                         "status": "fail",
                         "message": f"{item.menu.menu_name}의 재고가 부족합니다. "
-                                   f"(필요 수량: {total_required}, 보유 수량: {item.menu.menu_amount})"
+                                    f"(필요 수량: {total_required}, 보유 수량: {item.menu.menu_amount})"
                     }, status=HTTP_409_CONFLICT)
 
             ### 수정: 같은 세트메뉴가 이미 있으면 수량 증가
@@ -178,7 +178,8 @@ class CartAddView(APIView):
 
             menu_name = set_menu.set_name
             menu_price = set_menu.set_price
-            menu_image = set_menu.set_image.url if set_menu.set_image else None
+            menu_image = request.build_absolute_uri(set_menu.set_image.url) if set_menu.set_image else None
+
         
         # ------------------- 테이블 이용료 -------------------
         elif type_ == "seat_fee":
@@ -301,7 +302,7 @@ class CartMenuUpdateView(APIView):
                         "menu_name": menu.menu_name,
                         "quantity": quantity,
                         "menu_price": menu.menu_price,
-                        "menu_image": menu.menu_image.url if menu.menu_image else None
+                        "menu_image": request.build_absolute_uri(menu.menu_image.url) if menu.menu_image else None
                     }
                 }
             }, status=200)
@@ -346,7 +347,7 @@ class CartMenuUpdateView(APIView):
                         "menu_name": set_menu.set_name,
                         "quantity": quantity,
                         "menu_price": set_menu.set_price,
-                        "menu_image": set_menu.set_image.url if set_menu.set_image else None
+                        "menu_image": request.build_absolute_uri(set_menu.set_image.url) if set_menu.set_image else None
                     }
                 }
             }, status=200)
