@@ -305,7 +305,7 @@ class BoothMenuNamesViewSet(viewsets.ViewSet):
         # 세트메뉴 구성품도 같은 필터 적용
         set_item_names = list(
             SetMenuItem.objects.filter(set_menu__booth=booth)
-            .exclude(menu__category__in=["seat", "seat_fee"])  # ← 좌석요금 제외
+            .exclude(menu__menu_category__in=["seat", "seat_fee"])  # ← 좌석요금 제외
             .select_related("menu")
             .values_list("menu__menu_name", flat=True)
         )
