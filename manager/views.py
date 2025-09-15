@@ -174,7 +174,8 @@ class ManagerAuthAPIView(APIView):
                 "code": 200,
                 "data": {
                     "manager_id": manager.pk,
-                    "booth_id": booth.pk
+                    "booth_id": booth.pk,
+                    "access": access_token
                 }
             })
 
@@ -201,7 +202,8 @@ class ManagerAuthAPIView(APIView):
                     "code": 200,
                     "data": {
                         "manager_id": manager.pk,
-                        "booth_id": booth.pk
+                        "booth_id": booth.pk,
+                        "access": new_access
                     }
                 })
                 res.set_cookie(
