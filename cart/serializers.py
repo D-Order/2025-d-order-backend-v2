@@ -4,7 +4,7 @@ from menu.models import Menu, SetMenu, SetMenuItem
 
 
 class CartMenuSerializer(serializers.ModelSerializer):
-    id = serializers.IntegerField(source="menu.id", read_only=True)  # ✅ Menu.id 반환
+    id = serializers.IntegerField(source="menu.id", read_only=True)  # Menu.id 반환
     menu_name = serializers.CharField(source='menu.menu_name', read_only=True)
     menu_price = serializers.IntegerField(source='menu.menu_price', read_only=True)
     menu_image = serializers.SerializerMethodField()
@@ -16,8 +16,10 @@ class CartMenuSerializer(serializers.ModelSerializer):
         fields = ['id', 'menu_name', 'menu_price', 'quantity', 'menu_amount', 'menu_image', 'is_soldout']
 
     def get_menu_image(self, obj):
+        request = self.context.get("request")
         if obj.menu.menu_image and hasattr(obj.menu.menu_image, 'url'):
-            return obj.menu.menu_image.url
+            url = obj.menu.menu_image.url
+            return request.build_absolute_uri(url) if request else url
         return None
 
     def get_is_soldout(self, obj):
@@ -25,8 +27,7 @@ class CartMenuSerializer(serializers.ModelSerializer):
 
 
 class CartSetMenuSerializer(serializers.ModelSerializer):
-    id = serializers.IntegerField(source="set_menu.id", read_only=True)  # ✅ Menu.id 반환
-
+    id = serializers.IntegerField(source="set_menu.id", read_only=True)  # SetMenu.id 반환
     menu_name = serializers.CharField(source='set_menu.set_name', read_only=True)
     menu_price = serializers.IntegerField(source='set_menu.set_price', read_only=True)
     menu_image = serializers.SerializerMethodField()
@@ -37,8 +38,10 @@ class CartSetMenuSerializer(serializers.ModelSerializer):
         fields = ['id', 'menu_name', 'menu_price', 'quantity', 'menu_image', 'is_soldout']
 
     def get_menu_image(self, obj):
+        request = self.context.get("request")
         if obj.set_menu.set_image and hasattr(obj.set_menu.set_image, 'url'):
-            return obj.set_menu.set_image.url
+            url = obj.set_menu.set_image.url
+            return request.build_absolute_uri(url) if request else url
         return None
 
     def get_is_soldout(self, obj):
