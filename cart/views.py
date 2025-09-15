@@ -121,16 +121,31 @@ class CartAddView(APIView):
 
         cart, _ = Cart.objects.get_or_create(table=table, is_ordered=False)
 
+        # ------------------- 일반 메뉴 -------------------
         if type_ == "menu":
             menu = get_object_or_404(Menu, pk=item_id, booth_id=booth_id)
             if menu.menu_amount < quantity:
                 return Response({"status": "fail", "message": "메뉴 재고가 부족합니다."},
                                 status=HTTP_409_CONFLICT)
-            cart_item = CartMenu.objects.create(cart=cart, menu=menu, quantity=quantity)
+
+            ### 수정: 같은 메뉴가 이미 있으면 수량 증가
+            cart_item, created = CartMenu.objects.get_or_create(
+                cart=cart, menu=menu,
+                defaults={"quantity": quantity}
+            )
+            if not created:
+                new_qty = cart_item.quantity + quantity
+                if menu.menu_amount < new_qty:
+                    return Response({"status": "fail", "message": "메뉴 재고가 부족합니다."},
+                                    status=HTTP_409_CONFLICT)
+                cart_item.quantity = new_qty
+                cart_item.save()
+
             menu_name = menu.menu_name
             menu_price = menu.menu_price
             menu_image = menu.menu_image.url if menu.menu_image else None
 
+        # ------------------- 세트 메뉴 -------------------
         elif type_ == "set_menu":
             set_menu = get_object_or_404(SetMenu, pk=item_id, booth_id=booth_id)
             set_items = SetMenuItem.objects.filter(set_menu=set_menu)
@@ -140,10 +155,27 @@ class CartAddView(APIView):
                     return Response({
                         "status": "fail",
                         "message": f"{item.menu.menu_name}의 재고가 부족합니다. "
-                                    f"(필요 수량: {total_required}, 보유 수량: {item.menu.menu_amount})"
+                                   f"(필요 수량: {total_required}, 보유 수량: {item.menu.menu_amount})"
                     }, status=HTTP_409_CONFLICT)
 
-            cart_item = CartSetMenu.objects.create(cart=cart, set_menu=set_menu, quantity=quantity)
+            ### 수정: 같은 세트메뉴가 이미 있으면 수량 증가
+            cart_item, created = CartSetMenu.objects.get_or_create(
+                cart=cart, set_menu=set_menu,
+                defaults={"quantity": quantity}
+            )
+            if not created:
+                new_qty = cart_item.quantity + quantity
+                # 각 구성 메뉴 재고 재검증
+                for item in set_items:
+                    total_required = item.quantity * new_qty
+                    if item.menu.menu_amount < total_required:
+                        return Response({
+                            "status": "fail",
+                            "message": f"{item.menu.menu_name}의 재고가 부족합니다."
+                        }, status=HTTP_409_CONFLICT)
+                cart_item.quantity = new_qty
+                cart_item.save()
+
             menu_name = set_menu.set_name
             menu_price = set_menu.set_price
             menu_image = set_menu.set_image.url if set_menu.set_image else None
@@ -178,12 +210,15 @@ class CartAddView(APIView):
                 }
             )
 
-            # 중복 방지
-            if CartMenu.objects.filter(cart=cart, menu=fee_menu).exists():
-                return Response({"status": "fail", "message": "테이블 이용료는 이미 추가되었습니다."},
-                                status=HTTP_400_BAD_REQUEST)
+            # ------------------- 수정: 중복 시 수량 증가 -------------------
+            cart_item, created = CartMenu.objects.get_or_create(
+                cart=cart, menu=fee_menu,
+                defaults={"quantity": quantity}
+            )
+            if not created:
+                cart_item.quantity += quantity
+                cart_item.save()
 
-            cart_item = CartMenu.objects.create(cart=cart, menu=fee_menu, quantity=quantity)
             menu_name = fee_menu.menu_name
             menu_price = fee_price
             menu_image = None
@@ -202,13 +237,12 @@ class CartAddView(APIView):
                     "type": type_,
                     "id": item_id,
                     "menu_name": menu_name,
-                    "quantity": quantity,
+                    "quantity": cart_item.quantity,  # 수정: 최종 수량 반환
                     "menu_price": menu_price,
                     "menu_image": menu_image
                 }
             }
         }, status=HTTP_201_CREATED)
-
 
 class CartMenuUpdateView(APIView):
     def patch(self, request):
