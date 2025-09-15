@@ -298,7 +298,7 @@ class BoothMenuNamesViewSet(viewsets.ViewSet):
         # seat/seat_fee 제외
         menu_names = list(
             Menu.objects.filter(booth=booth)
-            .exclude(category__in=["seat", "seat_fee"])  # ← 좌석 요금 관련 메뉴 제외
+            .exclude(menu_category__in=["seat", "seat_fee"])  # ← 좌석 요금 관련 메뉴 제외
             .values_list("menu_name", flat=True)
         )
 
