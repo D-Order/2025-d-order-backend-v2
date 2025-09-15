@@ -74,26 +74,31 @@ class OrderListView(APIView):
         expanded = []
 
         for order in valid_orders:
-            # 일반 메뉴
             for om in OrderMenu.objects.filter(order=order).select_related("menu", "ordersetmenu__set_menu"):
                 if om.menu.menu_category == SEAT_FEE_CATEGORY:
                     continue  # seat_fee 제외
-                
-                # type 필터는 order_status 대신 menu.status 사용
+
+                # --- kitchen 필터 ---
                 if type_param == "kitchen" and om.status not in ["pending", "cooked"]:
                     continue
-                if type_param == "serving" and om.status not in ["cooked", "served"]:
-                    continue
-                
+
+                # --- serving 필터 ---
+                if type_param == "serving":
+                    if om.status not in ["cooked", "served"]:
+                        continue
+                    # served 후 10분 지나면 숨김 처리
+                    if om.status == "served" and om.updated_at <= now() - timedelta(seconds=10):
+                        continue
+
                 expanded.append({
-                    "order_item_id": om.id,   ### 수정: 혼동 줄이도록 order_item_id 사용
+                    "order_item_id": om.id,
                     "order_id": om.order_id,
                     "menu_id": om.menu_id,
                     "menu_name": om.menu.menu_name,
                     "menu_price": float(om.menu.menu_price),
                     "fixed_price": om.fixed_price,
                     "quantity": om.quantity,
-                    "status": om.status,  # 개별 메뉴 상태
+                    "status": om.status,
                     "created_at": om.order.created_at.isoformat(),
                     "updated_at": om.order.updated_at.isoformat(),
                     "order_amount": om.order.order_amount,
@@ -105,6 +110,7 @@ class OrderListView(APIView):
                     "set_name": om.ordersetmenu.set_menu.set_name if om.ordersetmenu else None,
                 })
 
+        # 필터링
         if menu_filter or category_filter:
             def _match(row):
                 ok = True
@@ -116,8 +122,10 @@ class OrderListView(APIView):
 
             expanded = [row for row in expanded if _match(row)]
 
+        # 정렬
         expanded.sort(key=lambda x: x["created_at"], reverse=True)
 
+        # 응답
         return Response({
             "status": "success",
             "code": 200,
@@ -126,6 +134,7 @@ class OrderListView(APIView):
                 "orders": expanded
             }
         }, status=200)
+
 
         
 class OrderCancelView(APIView):
