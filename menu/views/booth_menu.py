@@ -295,17 +295,22 @@ class BoothMenuNamesViewSet(viewsets.ViewSet):
 
         booth = manager.booth
 
-        # 일반 메뉴 이름
-        menu_names = list(Menu.objects.filter(booth=booth).values_list("menu_name", flat=True))
+        # seat/seat_fee 제외
+        menu_names = list(
+            Menu.objects.filter(booth=booth)
+            .exclude(category__in=["seat", "seat_fee"])  # ← 좌석 요금 관련 메뉴 제외
+            .values_list("menu_name", flat=True)
+        )
 
-        # 세트메뉴 구성품 → 풀어서 이름 추출
+        # 세트메뉴 구성품도 같은 필터 적용
         set_item_names = list(
             SetMenuItem.objects.filter(set_menu__booth=booth)
+            .exclude(menu__category__in=["seat", "seat_fee"])  # ← 좌석요금 제외
             .select_related("menu")
             .values_list("menu__menu_name", flat=True)
         )
 
-        # 중복 제거 + 정렬 (필요하다면)
+        # 중복 제거 + 정렬
         all_names = sorted(set(menu_names + set_item_names))
 
         return Response({
