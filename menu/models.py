@@ -9,6 +9,7 @@ class Menu(models.Model):
     CATEGORY_CHOICES = (
         ('메뉴', '메뉴'),
         ('음료', '음료'),
+        ('seat_fee', '테이블 이용료'),
     )
     id = models.AutoField(primary_key=True)
     booth = models.ForeignKey(Booth, on_delete=models.CASCADE)

@@ -2,6 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth.models import User
 from manager.models import Manager
 from booth.models import Booth
+from menu.models import Menu
 
 class SignupSerializer(serializers.Serializer):
     username = serializers.CharField()
@@ -40,6 +41,25 @@ class SignupSerializer(serializers.Serializer):
             seat_tax_table=validated_data['seat_tax_table'],
             table_limit_hours=validated_data['table_limit_hours'],
         )
+        # ✅ 테이블 이용료 메뉴 자동 생성
+        if manager.seat_type == "PP":
+            Menu.objects.create(
+                booth=booth,
+                menu_name="테이블 이용료(1인당)",
+                menu_description="좌석 이용 요금(1인 기준)",
+                menu_category="seat_fee",
+                menu_price=manager.seat_tax_person,
+                menu_amount=999999  # 사실상 무제한
+            )
+        elif manager.seat_type == "PT":
+            Menu.objects.create(
+                booth=booth,
+                menu_name="테이블 이용료(테이블당)",
+                menu_description="좌석 이용 요금(테이블 기준)",
+                menu_category="seat_fee",
+                menu_price=manager.seat_tax_table,
+                menu_amount=999999
+            )
 
         return manager
 
@@ -106,5 +126,40 @@ class ManagerMyPageSerializer(serializers.ModelSerializer):
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
+        
+    # ✅ seat_fee 메뉴 동기화
+        seat_fee_menu = Menu.objects.filter(booth=instance.booth, menu_category="seat_fee").first()
+        if seat_fee_menu:
+            if instance.seat_type == "PP":
+                seat_fee_menu.menu_price = instance.seat_tax_person
+                seat_fee_menu.menu_name = "테이블 이용료(1인당)"
+            elif instance.seat_type == "PT":
+                seat_fee_menu.menu_price = instance.seat_tax_table
+                seat_fee_menu.menu_name = "테이블 이용료(테이블당)"
+            else:
+                # seat_type=NO → seat_fee 메뉴 제거
+                seat_fee_menu.delete()
+                return instance
+            seat_fee_menu.save()
+        else:
+            # seat_fee 메뉴 없으면 새로 생성
+            if instance.seat_type == "PP":
+                Menu.objects.create(
+                    booth=instance.booth,
+                    menu_name="테이블 이용료(1인당)",
+                    menu_description="좌석 이용 요금(1인 기준)",
+                    menu_category="seat_fee",
+                    menu_price=instance.seat_tax_person,
+                    menu_amount=999999
+                )
+            elif instance.seat_type == "PT":
+                Menu.objects.create(
+                    booth=instance.booth,
+                    menu_name="테이블 이용료(테이블당)",
+                    menu_description="좌석 이용 요금(테이블 기준)",
+                    menu_category="seat_fee",
+                    menu_price=instance.seat_tax_table,
+                    menu_amount=999999
+                )
 
         return instance
