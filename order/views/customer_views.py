@@ -452,27 +452,30 @@ class CallStaffAPIView(APIView):
         booth_id = request.headers.get("Booth-ID")
 
         if not table_num:
-            return Response(
-                {"message": "table_num 값이 필요합니다."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
+            return Response({"message": "table_num 값이 필요합니다."}, status=400)
         if not booth_id:
-            return Response(
-                {"message": "Booth-ID 헤더가 필요합니다."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"message": "Booth-ID 헤더가 필요합니다."}, status=400)
 
-        table = get_object_or_404(Table, booth_id=booth_id, table_num=table_num)
+        booth = get_object_or_404(Booth, id=booth_id)
+        table = get_object_or_404(Table, booth=booth, table_num=table_num)
+
+        # 🔥 호출 저장
+        staff_call = StaffCall.objects.create(
+            booth=booth,
+            table=table,
+            message=message
+        )
+
+        # 🔥 웹소켓 전송
         channel_layer = get_channel_layer()
-
         async_to_sync(channel_layer.group_send)(
             f"booth_{booth_id}_staff_calls",
             {
                 "type": "staff_call",
                 "tableNumber": table.table_num,
                 "boothId": booth_id,
-                "message": message
+                "message": message,
+                "createdAt": staff_call.created_at.isoformat()
             }
         )
 
@@ -481,4 +484,31 @@ class CallStaffAPIView(APIView):
             "boothId": booth_id,
             "tableNumber": table.table_num,
             "data": {"message": message}
-        }, status=status.HTTP_200_OK)
+        }, status=200)
+
+    def get(self, request):
+        booth_id = request.headers.get("Booth-ID")
+        table_num = request.query_params.get("table_num")  # GET에서는 쿼리 파라미터 사용
+
+        if not booth_id:
+            return Response({"message": "Booth-ID 헤더가 필요합니다."}, status=400)
+        if not table_num:
+            return Response({"message": "table_num 값이 필요합니다."}, status=400)
+
+        booth = get_object_or_404(Booth, id=booth_id)
+        table = get_object_or_404(Table, booth=booth, table_num=table_num)
+
+        calls = StaffCall.objects.filter(
+            booth=booth, table=table
+        ).order_by("-created_at")[:7]
+
+        return Response({
+            "status": "success",
+            "data": [
+                {
+                    "tableNumber": c.table.table_num,
+                    "message": c.message,
+                    "createdAt": c.created_at.isoformat()
+                } for c in calls
+            ]
+        }, status=200)

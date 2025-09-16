@@ -1,5 +1,5 @@
 from django.db import models
-from booth.models import Table
+from booth.models import *
 from menu.models import SetMenu, Menu
 
 class Order(models.Model):
@@ -84,3 +84,16 @@ class OrderSetMenu(models.Model):
 
     def get_total_price(self):
         return self.fixed_price * self.quantity
+    
+# 직원 호출 기록
+class StaffCall(models.Model):
+    booth = models.ForeignKey(Booth, on_delete=models.CASCADE)
+    table = models.ForeignKey(Table, on_delete=models.CASCADE)
+    message = models.CharField(max_length=255, default="직원 호출")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"StaffCall #{self.pk} - Booth {self.booth_id}, Table {self.table.table_num}"
