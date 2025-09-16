@@ -97,6 +97,7 @@ class SetMenuSerializer(serializers.ModelSerializer):
     set_menu_id = serializers.IntegerField(source='id', read_only=True)
     set_image = serializers.ImageField(required=False, allow_null=True, use_url=True)
     origin_price = serializers.SerializerMethodField()
+    min_menu_amount = serializers.SerializerMethodField()
     is_soldout = serializers.SerializerMethodField()
     menu_items = serializers.ListField(write_only=True, required=False)
 
@@ -105,7 +106,7 @@ class SetMenuSerializer(serializers.ModelSerializer):
         model = SetMenu
         fields = [
             'set_menu_id', 'booth_id', 'set_category',
-            'set_name', 'set_description', 'set_price', 'set_image', 'menu_items','origin_price', 'is_soldout'
+            'set_name', 'set_description', 'set_price', 'set_image', 'menu_items','origin_price', 'is_soldout','min_menu_amount',
         ]
         read_only_fields = ['set_menu_id', 'booth_id', 'origin_price']
         
@@ -122,6 +123,11 @@ class SetMenuSerializer(serializers.ModelSerializer):
             if item.menu.menu_amount == 0:
                 return True
         return False
+    
+     # 👇 추가: 세트메뉴 안의 메뉴 중 가장 적은 재고 구하기
+    def get_min_menu_amount(self, obj):
+        amounts = [item.menu.menu_amount for item in obj.menu_items.all()]
+        return min(amounts) if amounts else 0
     
     def validate(self, data):
         booth = self.context.get('booth')
