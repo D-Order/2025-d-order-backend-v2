@@ -258,14 +258,14 @@ class UsernameCheckView(APIView):
 class ManagerQRView(APIView):
 
     def get(self, request):
-        manager_id = request.query_params.get('manager_id')
-        if not manager_id:
+        booth_id = request.query_params.get('booth_id')
+        if not booth_id:
             return Response(
-                {"message": "manager_id 쿼리 파라미터가 필요합니다."},
+                {"message": "booth_id 쿼리 파라미터가 필요합니다."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        manager = get_object_or_404(Manager, user_id=manager_id)
+        manager = get_object_or_404(Manager, booth_id=booth_id)
 
         if not manager.table_qr_image:
             return Response(
@@ -275,8 +275,11 @@ class ManagerQRView(APIView):
 
         return FileResponse(
             manager.table_qr_image.open('rb'),
-            content_type='image/png'
-        )
+            content_type='image/png',
+            as_attachment=True,
+            filename=manager.table_qr_image.name.split('/')[-1]  # qr_codes/ 이후 파일명만
+    )
+
 class ManagerMyPageView(RetrieveUpdateAPIView):
     serializer_class = ManagerMyPageSerializer
 
