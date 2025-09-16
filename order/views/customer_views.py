@@ -7,6 +7,7 @@ from django.db import transaction
 from django.utils.timezone import now
 from django.utils import timezone
 from datetime import timedelta
+from django.db import models
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from order.utils.order_broadcast import broadcast_order_update
@@ -56,6 +57,7 @@ def is_first_order_for_table_session(table_id: int, booth_id: int, now_dt):
 
 class OrderPasswordVerifyView(APIView):
     permission_classes = []
+
     def get(self, request):
         booth_id = request.headers.get("Booth-ID")
         table_num = request.query_params.get("table_num")
@@ -71,7 +73,7 @@ class OrderPasswordVerifyView(APIView):
         table = get_object_or_404(Table, booth=booth, table_num=table_num)
         manager = get_object_or_404(Manager, booth=booth)
         activated_at = table.activated_at
-        # 활성화 기록이 없으면 seat_count=0, order_amount=0
+
         if not activated_at:
             return Response({
                 "status": "success",
@@ -99,8 +101,8 @@ class OrderPasswordVerifyView(APIView):
                     order__in=order_qs,
                     menu=seat_fee_menu
                 ).aggregate(total=models.Sum("quantity"))["total"] or 0
-                
-                # 장바구니 seat_fee (아직 주문 안 된 상태)
+
+                # 장바구니 seat_fee
                 cart = Cart.objects.filter(table=table, is_ordered=False).order_by("-created_at").first()
                 cart_seat_count = 0
                 if cart:
@@ -111,15 +113,29 @@ class OrderPasswordVerifyView(APIView):
 
                 seat_count = ordered_seat_count + cart_seat_count
 
-        # 가장 최근 주문 금액 불러오기 (활성화 구간 이후만)
+        # 주문 금액 = (가장 최근 확정 주문 금액 + 장바구니 금액)
         latest_order = Order.objects.filter(
             table=table,
             created_at__gte=activated_at
         ).order_by("-created_at").first()
         latest_order_amount = latest_order.order_amount if latest_order else 0
 
+        # 장바구니 금액 계산
+        cart_amount = 0
+        cart = Cart.objects.filter(table=table, is_ordered=False).order_by("-created_at").first()
+        if cart:
+            cart_menu_amount = CartMenu.objects.filter(cart=cart).aggregate(
+                total=models.Sum(models.F("quantity") * models.F("menu__menu_price"))
+            )["total"] or 0
+
+            cart_set_amount = CartSetMenu.objects.filter(cart=cart).aggregate(
+                total=models.Sum(models.F("quantity") * models.F("set_menu__set_price"))
+            )["total"] or 0
+
+            cart_amount = cart_menu_amount + cart_set_amount
+
         data = {
-            "order_amount": latest_order_amount
+            "order_amount": latest_order_amount + cart_amount
         }
         if seat_count is not None:
             data["seat_count"] = seat_count
