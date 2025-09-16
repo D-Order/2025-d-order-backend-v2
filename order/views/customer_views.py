@@ -113,13 +113,6 @@ class OrderPasswordVerifyView(APIView):
 
                 seat_count = ordered_seat_count + cart_seat_count
 
-        # 주문 금액 = (가장 최근 확정 주문 금액 + 장바구니 금액)
-        latest_order = Order.objects.filter(
-            table=table,
-            created_at__gte=activated_at
-        ).order_by("-created_at").first()
-        latest_order_amount = latest_order.order_amount if latest_order else 0
-
         # 장바구니 금액 계산
         cart_amount = 0
         cart = Cart.objects.filter(table=table, is_ordered=False).order_by("-created_at").first()
@@ -135,7 +128,7 @@ class OrderPasswordVerifyView(APIView):
             cart_amount = cart_menu_amount + cart_set_amount
 
         data = {
-            "order_amount": latest_order_amount + cart_amount
+            "order_amount": cart_amount
         }
         if seat_count is not None:
             data["seat_count"] = seat_count
