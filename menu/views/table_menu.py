@@ -24,14 +24,20 @@ class UserBoothMenusViewSet(viewsets.ViewSet):
         try:
             manager = Manager.objects.get(booth=booth)
             if manager.seat_type == "PP":
+                seat_fee_menu = Menu.objects.filter(booth=booth, menu_category="seat_fee").first()
                 table_info = {
+        
                     "seat_type": "person",
-                    "seat_tax_person": manager.seat_tax_person
+                    "seat_tax_person": manager.seat_tax_person,
+                    "menu_id": seat_fee_menu.id if seat_fee_menu else None
                 }
+                
             elif manager.seat_type == "PT":
+                seat_fee_menu = Menu.objects.filter(booth=booth, menu_category="seat_fee").first()
                 table_info = {
                     "seat_type": "table",
-                    "seat_tax_table": manager.seat_tax_table
+                    "seat_tax_table": manager.seat_tax_table,
+                    "menu_id": seat_fee_menu.id if seat_fee_menu else None
                 }
             else:
                 table_info = []
