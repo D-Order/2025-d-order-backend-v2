@@ -18,6 +18,10 @@ def expand_order(order: Order):
         # 서빙 완료 후 10초 지난 건 제외
         if om.status == "served" and om.updated_at <= now() - timedelta(seconds=10):
             continue
+
+        # 여기서 음료일 경우 status 강제로 cooked 처리
+        status = "cooked" if om.menu.menu_category == "음료" else om.status
+
         expanded.append({
             "ordermenu_id": om.id,
             "order_id": om.order_id,
@@ -25,7 +29,7 @@ def expand_order(order: Order):
             "menu_name": om.menu.menu_name,
             "menu_image": om.menu.menu_image.url if om.menu.menu_image else None,
             "quantity": om.quantity,
-            "status": om.status,
+            "status": status,   # 수정된 status 적용
             "created_at": om.order.created_at.isoformat(),
             "table_num": om.order.table.table_num,
             "from_set": False,
@@ -33,6 +37,7 @@ def expand_order(order: Order):
             "set_name": None,
         })
 
+    # 세트 메뉴 처리
     order_sets = OrderSetMenu.objects.filter(order=order).select_related("set_menu")
     for osm in order_sets:
         order_menus = OrderMenu.objects.filter(
@@ -41,9 +46,12 @@ def expand_order(order: Order):
         for om in order_menus:
             if om.menu.menu_category not in VISIBLE_MENU_CATEGORIES:
                 continue
-            # 서빙 완료 후 10초 지난 건 제외
             if om.status == "served" and om.updated_at <= now() - timedelta(seconds=10):
                 continue
+
+            # 세트 구성품도 음료면 cooked 처리
+            status = "cooked" if om.menu.menu_category == "음료" else om.status
+
             expanded.append({
                 "ordermenu_id": om.id,   # 세트 구성도 OrderMenu 기준으로
                 "order_id": om.order_id,
@@ -51,7 +59,7 @@ def expand_order(order: Order):
                 "menu_name": om.menu.menu_name,
                 "menu_image": om.menu.menu_image.url if om.menu.menu_image else None,
                 "quantity": om.quantity,
-                "status": om.status,
+                "status": status,   # 수정된 status 적용
                 "created_at": om.order.created_at.isoformat(),
                 "table_num": om.order.table.table_num,
                 "from_set": True,

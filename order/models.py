@@ -54,6 +54,12 @@ class OrderMenu(models.Model):
 
     def get_total_price(self):
         return self.fixed_price * self.quantity
+    
+    def save(self, *args, **kwargs):
+        # 음료면 무조건 status="cooked"
+        if self.menu and self.menu.menu_category == "음료":
+            self.status = "cooked"
+        super().save(*args, **kwargs)
 
 
 class OrderSetMenu(models.Model):
