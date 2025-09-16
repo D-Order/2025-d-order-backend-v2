@@ -127,6 +127,24 @@ class OrderPasswordVerifyView(APIView):
 
             cart_amount = cart_menu_amount + cart_set_amount
 
+            # 🚩 쿠폰 처리
+            coupon_discount, applied_coupon_code = 0, None
+            coupon_code = CouponCode.objects.filter(
+                issued_to_table=table,
+                used_at__isnull=True
+            ).select_related("coupon").first()
+
+            if coupon_code:
+                applied_coupon_code = coupon_code.code
+                cpn = coupon_code.coupon
+                pre_discount_total = cart_amount
+                if cpn.discount_type.lower() == "percent":
+                    coupon_discount = min(int(pre_discount_total * cpn.discount_value / 100), pre_discount_total)
+                else:
+                    coupon_discount = min(int(cpn.discount_value), pre_discount_total)
+
+                cart_amount = max(pre_discount_total - coupon_discount, 0)
+
         data = {
             "order_amount": cart_amount
         }
