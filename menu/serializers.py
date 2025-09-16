@@ -72,14 +72,14 @@ class MenuSerializer(serializers.ModelSerializer):
         if value is None:
             return value
 
-        max_size = 2 * 1024 * 1024  # 2MB
+        max_size = 10 * 1024 * 1024  # 2MB
         allowed_types = ['image/jpeg', 'image/png']
 
         if getattr(value, 'size', None) is None:
             raise serializers.ValidationError("업로드된 파일의 크기를 확인할 수 없습니다.")
 
         if value.size > max_size:
-            raise serializers.ValidationError("이미지가 너무 큽니다. 2MB 이하로 업로드 해주세요.")
+            raise serializers.ValidationError("이미지가 너무 큽니다. 10MB 이하로 업로드 해주세요.")
 
         content_type = getattr(value, 'content_type', None)
         if content_type not in allowed_types:
@@ -234,14 +234,14 @@ class SetMenuSerializer(serializers.ModelSerializer):
         if value is None:
             return value
 
-        max_size = 2 * 1024 * 1024  # 2MB
+        max_size = 10 * 1024 * 1024  # 2MB
         allowed_types = ['image/jpeg', 'image/png']
 
         if getattr(value, 'size', None) is None:
             raise serializers.ValidationError("업로드된 파일의 크기를 확인할 수 없습니다.")
 
         if value.size > max_size:
-            raise serializers.ValidationError("이미지가 너무 큽니다. 2MB 이하로 업로드 해주세요.")
+            raise serializers.ValidationError("이미지가 너무 큽니다. 10MB 이하로 업로드 해주세요.")
 
         content_type = getattr(value, 'content_type', None)
         if content_type not in allowed_types:
