@@ -38,13 +38,13 @@ class MenuSerializer(serializers.ModelSerializer):
         return value
 
     def validate_menu_price(self, value):
-        if value is None or value < 0:
-            raise serializers.ValidationError("가격은 0 이상이어야 합니다.")
+        if value is None or value < 0 or value > 100000:
+            raise serializers.ValidationError("가격은 0 이상 100,000 이하만 가능합니다.")
         return value
 
     def validate_menu_amount(self, value):
-        if value is None or value < 0:
-            raise serializers.ValidationError("수량은 0 이상이어야 합니다.")
+        if value is None or value < 0 or value > 9999:
+            raise serializers.ValidationError("수량은 0 이상 9,999 이하만 가능합니다.")
         return value
 
     def validate(self, data):
@@ -132,6 +132,7 @@ class SetMenuSerializer(serializers.ModelSerializer):
     def validate(self, data):
         booth = self.context.get('booth')
 
+
         raw_menu_items = self.initial_data.get('menu_items')
         
         # 문자열이면 JSON 파싱 시도
@@ -168,6 +169,8 @@ class SetMenuSerializer(serializers.ModelSerializer):
         if data.get('set_price', 0) < 0:
             raise serializers.ValidationError({'set_price': '가격은 0 이상이어야 합니다.'})
 
+        if data.get('set_price', 0) < 0 or data.get('set_price', 0) > 100000:
+            raise serializers.ValidationError({'set_price': '가격은 0 이상 100,000 이하만 가능합니다.'})
         return data
 
     def create(self, validated_data):

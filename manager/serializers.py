@@ -133,9 +133,11 @@ class ManagerMyPageSerializer(serializers.ModelSerializer):
             if instance.seat_type == "PP":
                 seat_fee_menu.menu_price = instance.seat_tax_person
                 seat_fee_menu.menu_name = "테이블 이용료(1인당)"
+                seat_fee_menu.menu_description = "인원수에 맞춰 주문해주세요"
             elif instance.seat_type == "PT":
                 seat_fee_menu.menu_price = instance.seat_tax_table
                 seat_fee_menu.menu_name = "테이블 이용료(테이블당)"
+                seat_fee_menu.menu_description = "테이블 기준 1회 필수 주문이 필요해요"
             else:
                 # seat_type=NO → seat_fee 메뉴 제거
                 seat_fee_menu.delete()
@@ -147,7 +149,7 @@ class ManagerMyPageSerializer(serializers.ModelSerializer):
                 Menu.objects.create(
                     booth=instance.booth,
                     menu_name="테이블 이용료(1인당)",
-                    menu_description="좌석 이용 요금(1인 기준)",
+                    menu_description="인원수에 맞춰 주문해주세요",
                     menu_category="seat_fee",
                     menu_price=instance.seat_tax_person,
                     menu_amount=999999
@@ -156,7 +158,7 @@ class ManagerMyPageSerializer(serializers.ModelSerializer):
                 Menu.objects.create(
                     booth=instance.booth,
                     menu_name="테이블 이용료(테이블당)",
-                    menu_description="좌석 이용 요금(테이블 기준)",
+                    menu_description="테이블 기준 1회 필수 주문이 필요해요",
                     menu_category="seat_fee",
                     menu_price=instance.seat_tax_table,
                     menu_amount=999999

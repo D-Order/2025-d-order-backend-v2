@@ -20,13 +20,9 @@ class Manager(models.Model):
         ('PT', 'Seat Tax Per Table'),
     ]
 
-    seat_type = models.CharField(
-        max_length=2,
-        choices=SEAT_TYPE_CHOICES,
-        default='NO'
-    )
-    seat_tax_person = models.IntegerField()
-    seat_tax_table = models.IntegerField()
+    seat_type = models.CharField(max_length=2, choices=[("NO","없음"),("PP","1인당"),("PT","테이블당")])
+    seat_tax_person = models.IntegerField(null=True, blank=True)  # ✅ 수정
+    seat_tax_table = models.IntegerField(null=True, blank=True)   # ✅ 수정
     table_limit_hours = models.IntegerField()
     table_qr_image = models.ImageField(
         upload_to='qr_codes/',
