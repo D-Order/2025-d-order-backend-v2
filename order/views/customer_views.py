@@ -374,7 +374,7 @@ class TableOrderListView(APIView):
             valid_orders = Order.objects.none()
 
         total_amount = sum(o.order_amount for o in valid_orders)
-        expanded = []
+        aggregated = {}
 
 
         # ✅ OrderMenu만 조회 (세트 포함)
@@ -382,66 +382,57 @@ class TableOrderListView(APIView):
             "menu", "order", "ordersetmenu", "ordersetmenu__set_menu"
         )
 
-        expanded = []
+        # ✅ 메뉴별 합산 결과 딕셔너리
+        aggregated = {}
 
-        # ✅ 단품 (세트 소속 아닌 것만)
+        # 단품 메뉴
         order_menus = OrderMenu.objects.filter(
-            order__in=valid_orders, ordersetmenu__isnull=True
-        ).select_related("menu", "order").order_by("-order__created_at")
+            order__in=valid_orders,
+            ordersetmenu__isnull=True
+        ).select_related("menu", "order")
 
         for om in order_menus:
-            row = {
-                "type": "menu",
-                "id": om.id,
-                "order_id": om.order_id,
-                "menu_id": om.menu_id,
-                "menu_name": om.menu.menu_name,
-                "menu_price": float(om.menu.menu_price),
-                "fixed_price": om.fixed_price,
-                "quantity": om.quantity,
-                "status": om.status,
-                "created_at": om.order.created_at.isoformat(),
-                "updated_at": om.order.updated_at.isoformat(),
-                "order_amount": om.order.order_amount,
-                "table_num": om.order.table.table_num,
-                "menu_image": om.menu.menu_image.url if om.menu.menu_image else None,
-                "menu_category": om.menu.menu_category,
-            }
-            expanded.append(row)
+            key = f"menu_{om.menu_id}"
+            if key not in aggregated:
+                aggregated[key] = {
+                    "type": "menu",
+                    "menu_id": om.menu_id,
+                    "menu_name": om.menu.menu_name,
+                    "menu_price": float(om.menu.menu_price),
+                    "fixed_price": om.fixed_price,
+                    "quantity": 0,
+                    "status": om.status,
+                    "menu_image": om.menu.menu_image.url if om.menu.menu_image else None,
+                    "menu_category": om.menu.menu_category,
+                }
+            aggregated[key]["quantity"] += om.quantity
 
-        # ✅ 세트 메뉴
+        # 세트 메뉴
         order_sets = OrderSetMenu.objects.filter(
             order__in=valid_orders
-        ).select_related("set_menu", "order").order_by("-order__created_at")
+        ).select_related("set_menu", "order")
 
         for osm in order_sets:
-            row = {
-                "type": "setmenu",
-                "id": osm.id,
-                "order_id": osm.order_id,
-                "set_id": osm.set_menu_id,
-                "set_name": osm.set_menu.set_name,
-                "set_price": osm.set_menu.set_price,
-                "fixed_price": osm.fixed_price,
-                "quantity": osm.quantity,
-                "status": osm.status,
-                "created_at": osm.order.created_at.isoformat(),
-                "updated_at": osm.order.updated_at.isoformat(),
-                "order_amount": osm.order.order_amount,
-                "table_num": osm.order.table.table_num,
-                "set_image": osm.set_menu.set_image.url if osm.set_menu.set_image else None,
-            }
-            expanded.append(row)
-
-        # # ✅ 최신순 정렬
-        # expanded.sort(key=lambda x: x["created_at"], reverse=True)
+            key = f"set_{osm.set_menu_id}"
+            if key not in aggregated:
+                aggregated[key] = {
+                    "type": "setmenu",
+                    "set_id": osm.set_menu_id,
+                    "set_name": osm.set_menu.set_name,
+                    "set_price": osm.set_menu.set_price,
+                    "fixed_price": osm.fixed_price,
+                    "quantity": 0,
+                    "status": osm.status,
+                    "set_image": osm.set_menu.set_image.url if osm.set_menu.set_image else None,
+                }
+            aggregated[key]["quantity"] += osm.quantity
 
         return Response({
             "status": "success",
             "code": 200,
             "data": {
-                "order_amount": total_amount,   # ✅ 최종 합계 한 번만
-                "orders": expanded
+                "order_amount": total_amount,
+                "orders": list(aggregated.values())
             }
         }, status=200)
 

@@ -244,40 +244,61 @@ class TableListView(APIView):
             total_amount = sum(o.order_amount for o in orders)
             status = table.status
 
-            # ✅ 주문 전체에서 최신순으로 아이템 수집
-            order_items = []
+            aggregated = {}
 
-            for order in orders.order_by("-created_at"):
-                # 단품 (세트 소속 아닌 것만)
-                for om in OrderMenu.objects.filter(order=order, ordersetmenu__isnull=True).select_related("menu"):
-                    order_items.append({
+            # ✅ 단품 메뉴 합산
+            order_menus = OrderMenu.objects.filter(
+                order__in=orders, ordersetmenu__isnull=True
+            ).select_related("menu", "order")
+
+            for om in order_menus:
+                key = f"menu_{om.menu_id}"
+                if key not in aggregated:
+                    aggregated[key] = {
                         "menu_name": "테이블 이용료(인당)" if om.menu.menu_category == "seat_fee" else om.menu.menu_name,
-                        "quantity": om.quantity,
-                        "created_at": om.order.created_at
-                    })
+                        "quantity": 0,
+                        "latest_created_at": om.order.created_at,
+                    }
+                aggregated[key]["quantity"] += om.quantity
+                # 최신 주문시간 업데이트
+                if om.order.created_at > aggregated[key]["latest_created_at"]:
+                    aggregated[key]["latest_created_at"] = om.order.created_at
 
-                # 세트
-                for osm in OrderSetMenu.objects.filter(order=order).select_related("set_menu"):
-                    order_items.append({
+            # ✅ 세트 메뉴 합산
+            order_sets = OrderSetMenu.objects.filter(
+                order__in=orders
+            ).select_related("set_menu", "order")
+
+            for osm in order_sets:
+                key = f"set_{osm.set_menu_id}"
+                if key not in aggregated:
+                    aggregated[key] = {
                         "menu_name": osm.set_menu.set_name,
-                        "quantity": osm.quantity,
-                        "created_at": osm.order.created_at
-                    })
+                        "quantity": 0,
+                        "latest_created_at": osm.order.created_at,
+                    }
+                aggregated[key]["quantity"] += osm.quantity
+                if osm.order.created_at > aggregated[key]["latest_created_at"]:
+                    aggregated[key]["latest_created_at"] = osm.order.created_at
 
-            # 최신순 정렬 후 3개만
-            latest_orders_json = sorted(order_items, key=lambda x: x["created_at"], reverse=True)[:3]
-            # created_at은 응답에 필요 없으니 제거
+            # ✅ 최신순 정렬 후 상위 3개만 추출
+            latest_orders_json = sorted(
+                aggregated.values(),
+                key=lambda x: x["latest_created_at"],
+                reverse=True
+            )[:3]
+
+            # created_at 제거
             for item in latest_orders_json:
-                item.pop("created_at", None)
+                item.pop("latest_created_at", None)
 
             result.append({
                 "table_num": table.table_num,
                 "table_amount": total_amount,
-                "table_status": status,
+                "table_status": table.status,
                 "created_at": first_order_time,
                 "latest_orders": latest_orders_json
             })
-            
 
         return Response({
             "status": "success",
@@ -325,38 +346,65 @@ class TableDetailView(APIView):
         first_order = orders.first()
         first_order_time = first_order.created_at if first_order else None
 
-        orders_json = []
+        aggregated = {}
 
-        # ✅ 단품 (세트 소속 아닌 것만)
+        # ✅ 단품 메뉴 합산
         order_menus = OrderMenu.objects.filter(
             order__in=orders, ordersetmenu__isnull=True
-        ).select_related("menu", "order").order_by("-order__created_at")
+        ).select_related("menu", "order")
 
         for om in order_menus:
-            data = TableOrderMenuSerializer(om).data
-            if om.menu.menu_category == "seat_fee":
-                data["menu_name"] = "테이블 이용료(인당)"
-            # created_at 추가
-            data["created_at"] = om.order.created_at
-            orders_json.append(data)
+            key = f"menu_{om.menu_id}"
+            if key not in aggregated:
+                aggregated[key] = {
+                    "type": "menu",
+                    "menu_id": om.menu_id,
+                    "menu_name": "테이블 이용료(인당)" if om.menu.menu_category == "seat_fee" else om.menu.menu_name,
+                    "menu_price": float(om.menu.menu_price),
+                    "fixed_price": om.fixed_price,
+                    "quantity": 0,
+                    "status": om.status,
+                    "menu_image": om.menu.menu_image.url if om.menu.menu_image else None,
+                    "menu_category": om.menu.menu_category,
+                    "latest_created_at": om.order.created_at,
+                }
+            aggregated[key]["quantity"] += om.quantity
+            if om.order.created_at > aggregated[key]["latest_created_at"]:
+                aggregated[key]["latest_created_at"] = om.order.created_at
 
-        # ✅ 세트 메뉴
+        # ✅ 세트 메뉴 합산
         order_sets = OrderSetMenu.objects.filter(
             order__in=orders
-        ).select_related("set_menu", "order").order_by("-order__created_at")
+        ).select_related("set_menu", "order")
 
         for osm in order_sets:
-            data = TableOrderSetMenuSerializer(osm).data
-            # created_at 추가
-            data["created_at"] = osm.order.created_at
-            orders_json.append(data)
+            key = f"set_{osm.set_menu_id}"
+            if key not in aggregated:
+                aggregated[key] = {
+                    "type": "setmenu",
+                    "set_id": osm.set_menu_id,
+                    "set_name": osm.set_menu.set_name,
+                    "set_price": osm.set_menu.set_price,
+                    "fixed_price": osm.fixed_price,
+                    "quantity": 0,
+                    "status": osm.status,
+                    "set_image": osm.set_menu.set_image.url if osm.set_menu.set_image else None,
+                    "latest_created_at": osm.order.created_at,
+                }
+            aggregated[key]["quantity"] += osm.quantity
+            if osm.order.created_at > aggregated[key]["latest_created_at"]:
+                aggregated[key]["latest_created_at"] = osm.order.created_at
 
-        # # ✅ 최신순 정렬
-        # orders_json = sorted(orders_json, key=lambda x: x["created_at"], reverse=True)
+        # ✅ 최신순 정렬
+        orders_json = sorted(
+            aggregated.values(),
+            key=lambda x: x["latest_created_at"],
+            reverse=True
+        )
 
-        # created_at은 최종 응답에서 필요 없으면 제거
+        # created_at 제거
         for item in orders_json:
-            item.pop("created_at", None)
+            item.pop("latest_created_at", None)
 
         return Response({
             "status": "success",
@@ -365,7 +413,7 @@ class TableDetailView(APIView):
             "data": {
                 "table_num": table.table_num,
                 "table_amount": total_amount,
-                "table_status": status,
+                "table_status": table.status,
                 "created_at": first_order_time,
                 "orders": orders_json
             }

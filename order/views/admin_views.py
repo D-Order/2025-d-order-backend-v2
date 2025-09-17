@@ -123,7 +123,7 @@ class OrderListView(APIView):
             expanded = [row for row in expanded if _match(row)]
 
         # 정렬
-        expanded.sort(key=lambda x: x["created_at"], reverse=True)
+        expanded.sort(key=lambda x: x["created_at"])
 
         # 응답
         return Response({
