@@ -489,18 +489,15 @@ class CallStaffAPIView(APIView):
 
     def get(self, request):
         booth_id = request.headers.get("Booth-ID")
-        table_num = request.query_params.get("table_num")  # GET에서는 쿼리 파라미터 사용
 
         if not booth_id:
             return Response({"message": "Booth-ID 헤더가 필요합니다."}, status=400)
-        if not table_num:
-            return Response({"message": "table_num 값이 필요합니다."}, status=400)
 
         booth = get_object_or_404(Booth, id=booth_id)
-        table = get_object_or_404(Table, booth=booth, table_num=table_num)
 
+        # 부스 전체 기준 최근 7개 호출만 가져오기
         calls = StaffCall.objects.filter(
-            booth=booth, table=table
+            booth=booth
         ).order_by("-created_at")[:7]
 
         return Response({
@@ -508,7 +505,6 @@ class CallStaffAPIView(APIView):
             "data": [
                 {
                     "tableNumber": c.table.table_num,
-                    "message": c.message,
                     "createdAt": c.created_at.isoformat()
                 } for c in calls
             ]
