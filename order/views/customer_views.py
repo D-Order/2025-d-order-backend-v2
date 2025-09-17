@@ -128,9 +128,14 @@ class OrderPasswordVerifyView(APIView):
             pre_discount_total = cart_menu_amount + cart_set_amount
             cart_amount = pre_discount_total
 
-            # Cart에 쿠폰이 있으면 바로 할인 적용
-            if getattr(cart, "applied_coupon", None):
-                cpn = cart.applied_coupon
+            # ✅ 쿠폰은 issued_to_table 기준으로만 반영 (applied_coupon은 무시)
+            coupon_code = CouponCode.objects.filter(
+                issued_to_table=table,
+                used_at__isnull=True
+            ).select_related("coupon").first()
+
+            if coupon_code:
+                cpn = coupon_code.coupon
                 if cpn.discount_type.lower() == "percent":
                     coupon_discount = min(int(pre_discount_total * cpn.discount_value / 100), pre_discount_total)
                 else:
@@ -273,28 +278,30 @@ class OrderPasswordVerifyView(APIView):
                         )
                     subtotal += setmenu.set_price * cs.quantity
 
-                # 쿠폰 처리
+                # 쿠폰 확정 처리
                 coupon_discount, applied_coupon_code = 0, None
-                coupon_code = CouponCode.objects.filter(
-                    issued_to_table=table,
-                    used_at__isnull=True
-                ).select_related("coupon").first()
+                if cart.applied_coupon:
+                    cpn = cart.applied_coupon
+                    coupon_code = CouponCode.objects.filter(
+                        coupon=cpn,
+                        issued_to_table=table,
+                        used_at__isnull=True
+                    ).first()
 
-                if coupon_code:
-                    applied_coupon_code = coupon_code.code
-                    cpn = coupon_code.coupon
                     pre_discount_total = subtotal + table_fee
                     if cpn.discount_type.lower() == "percent":
                         coupon_discount = min(int(pre_discount_total * cpn.discount_value / 100), pre_discount_total)
                     else:
                         coupon_discount = min(int(cpn.discount_value), pre_discount_total)
 
-                    coupon_code.used_at = now_dt
-                    coupon_code.issued_to_table = None
-                    coupon_code.save(update_fields=['used_at', 'issued_to_table'])
+                    if coupon_code:
+                        coupon_code.used_at = now_dt
+                        coupon_code.issued_to_table = None
+                        coupon_code.save(update_fields=['used_at', 'issued_to_table'])
                     cpn.quantity = (cpn.quantity or 0) - 1
                     cpn.save(update_fields=['quantity'])
                     TableCoupon.objects.filter(table=table, coupon=cpn, used_at__isnull=True).update(used_at=now_dt)
+                    applied_coupon_code = coupon_code.code if coupon_code else None
 
                 total_price = subtotal + table_fee - coupon_discount
                 if total_price < 0:
@@ -306,16 +313,15 @@ class OrderPasswordVerifyView(APIView):
                 booth.total_revenues = (booth.total_revenues or 0) + total_price
                 booth.save()
 
-                # 장바구니 정리
+                # 장바구니 비우기
                 CartMenu.objects.filter(cart=cart).delete()
                 CartSetMenu.objects.filter(cart=cart).delete()
                 cart.is_ordered = True
                 cart.save()
 
-                # 주문 성공 후 운영자 페이지에 브로드캐스트
+                # 운영자 브로드캐스트
                 broadcast_order_update(order)
 
-                ### 수정: 주문 생성 후 통계 업데이트 추가
                 from statistic.utils import push_statistics
                 push_statistics(booth.id)
 
@@ -333,6 +339,17 @@ class OrderPasswordVerifyView(APIView):
                         "booth_total_revenues": booth.total_revenues
                     }
                 }, status=201)
+
+        except ValueError as e:
+            return Response({"status": "error", "code": 400, "message": str(e)}, status=400)
+        except Exception as e:
+            import traceback
+            print("🚨 OrderPasswordVerifyView Exception:", e)
+            traceback.print_exc()
+            return Response(
+                {"status": "error", "code": 500, "message": str(e)},
+                status=500
+            )
 
         except ValueError as e:
             return Response({"status": "error", "code": 400, "message": str(e)}, status=400)
