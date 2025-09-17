@@ -11,8 +11,6 @@ from django.db import models
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from order.utils.order_broadcast import broadcast_order_update
-from rest_framework import permissions
-from rest_framework.decorators import permission_classes
 
 from order.models import *
 from menu.models import *
@@ -460,9 +458,18 @@ class CallStaffAPIView(APIView):
         booth_id = request.headers.get("Booth-ID")
 
         if not table_num:
-            return Response({"message": "table_num 값이 필요합니다."}, status=400)
+            return Response({
+                "type": "ERROR",
+                "code": 400,
+                "message": "table_num 값이 필요합니다."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         if not booth_id:
-            return Response({"message": "Booth-ID 헤더가 필요합니다."}, status=400)
+            return Response({
+                "type": "ERROR",
+                "code": 400,
+                "message": "Booth-ID 헤더가 필요합니다."
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         booth = get_object_or_404(Booth, id=booth_id)
         table = get_object_or_404(Table, booth=booth, table_num=table_num)
@@ -479,27 +486,36 @@ class CallStaffAPIView(APIView):
         async_to_sync(channel_layer.group_send)(
             f"booth_{booth_id}_staff_calls",
             {
-                "type": "staff_call",
+                "type": "CALL_STAFF",
                 "tableNumber": table.table_num,
                 "boothId": booth_id,
-                "message": message,
+                "message": f"{table.table_num}번 테이블에서 직원을 호출했습니다!",
                 "createdAt": staff_call.created_at.isoformat()
             }
         )
 
         return Response({
-            "message": "직원 호출이 전송되었습니다.",
-            "boothId": booth_id,
+            "type": "CALL_STAFF",
             "tableNumber": table.table_num,
-            "data": {"message": message}
-        }, status=200)
+            "message": f"{table.table_num}번 테이블에서 직원을 호출했습니다!"
+        }, status=status.HTTP_200_OK)
 
-    @permission_classes([permissions.IsAuthenticated])
     def get(self, request):
-        user = request.user
-        manager = getattr(user, "manager_profile", None)
+        # JWT 인증 확인
+        if not request.user.is_authenticated:
+            return Response({
+                "type": "ERROR",
+                "code": 401,
+                "message": "인증이 필요합니다."
+            }, status=status.HTTP_401_UNAUTHORIZED)
+
+        manager = getattr(request.user, "manager_profile", None)
         if not manager:
-            return Response({"status": "fail", "message": "운영자 권한이 없습니다."}, status=403)
+            return Response({
+                "type": "ERROR",
+                "code": 403,
+                "message": "운영자 권한이 없습니다."
+            }, status=status.HTTP_403_FORBIDDEN)
 
         booth = manager.booth
 
@@ -513,7 +529,7 @@ class CallStaffAPIView(APIView):
             "data": [
                 {
                     "tableNumber": c.table.table_num,
-                    "createdAt": c.created_at.isoformat()
+                    "createdAt": c.created_at.isoformat(),
                 } for c in calls
             ]
-        }, status=200)
+        }, status=status.HTTP_200_OK)
