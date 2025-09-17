@@ -568,6 +568,10 @@ class ApplyCouponView(APIView):
         coupon_code.issued_to_table = table
         coupon_code.save(update_fields=['issued_to_table'])
 
+        # ✅ Cart에 적용 쿠폰 기록
+        cart.applied_coupon = coupon_code.coupon
+        cart.save(update_fields=['applied_coupon'])
+
         # TableCoupon 기록(중복 방지)
         TableCoupon.objects.get_or_create(table=table, coupon=coupon_code.coupon)
 

@@ -8,6 +8,14 @@ class Cart(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
+    # 현재 장바구니에 적용된 쿠폰 (nullable)
+    applied_coupon = models.ForeignKey(
+        "coupon.Coupon",
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="applied_carts"
+    )
+    
     def __str__(self):
         return f"Cart #{self.id} (Table {self.table.table_num})"
 

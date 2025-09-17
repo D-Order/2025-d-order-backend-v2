@@ -125,19 +125,12 @@ class OrderPasswordVerifyView(APIView):
                 total=models.Sum(models.F("quantity") * models.F("set_menu__set_price"))
             )["total"] or 0
 
-            cart_amount = cart_menu_amount + cart_set_amount
+            pre_discount_total = cart_menu_amount + cart_set_amount
+            cart_amount = pre_discount_total
 
-            # 🚩 쿠폰 처리
-            coupon_discount, applied_coupon_code = 0, None
-            coupon_code = CouponCode.objects.filter(
-                issued_to_table=table,
-                used_at__isnull=True
-            ).select_related("coupon").first()
-
-            if coupon_code:
-                applied_coupon_code = coupon_code.code
-                cpn = coupon_code.coupon
-                pre_discount_total = cart_amount
+            # Cart에 쿠폰이 있으면 바로 할인 적용
+            if getattr(cart, "applied_coupon", None):
+                cpn = cart.applied_coupon
                 if cpn.discount_type.lower() == "percent":
                     coupon_discount = min(int(pre_discount_total * cpn.discount_value / 100), pre_discount_total)
                 else:
