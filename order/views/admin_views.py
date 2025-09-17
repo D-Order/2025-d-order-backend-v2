@@ -257,6 +257,9 @@ class OrderCancelView(APIView):
                 booth = order.table.booth
                 booth.total_revenues = max((booth.total_revenues or 0) - total_refund, 0)
                 booth.save()
+                
+                from order.utils.order_broadcast import broadcast_total_revenue
+                broadcast_total_revenue(booth.id, booth.total_revenues)
 
                 # 통계 push
                 from statistic.utils import push_statistics
