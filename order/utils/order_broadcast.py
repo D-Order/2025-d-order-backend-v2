@@ -85,3 +85,17 @@ def broadcast_order_update(order: Order):
             }
         }
     )
+    
+def broadcast_total_revenue(booth_id: int, total_revenue: int):
+    """
+    총매출만 따로 브로드캐스트
+    """
+    channel_layer = get_channel_layer()
+    async_to_sync(channel_layer.group_send)(
+        f"booth_{booth_id}_revenue",
+        {
+            "type": "revenue_update",
+            "boothId": booth_id,
+            "totalRevenue": total_revenue,
+        }
+    )

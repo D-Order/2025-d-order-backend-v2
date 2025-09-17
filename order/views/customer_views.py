@@ -11,6 +11,8 @@ from django.db import models
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from order.utils.order_broadcast import broadcast_order_update
+from rest_framework import permissions
+from rest_framework.decorators import permission_classes
 
 from order.models import *
 from menu.models import *
@@ -313,6 +315,9 @@ class OrderPasswordVerifyView(APIView):
                 booth.total_revenues = (booth.total_revenues or 0) + total_price
                 booth.save()
 
+                from order.utils.order_broadcast import broadcast_total_revenue
+                broadcast_total_revenue(booth.id, booth.total_revenues)
+
                 # 장바구니 비우기
                 CartMenu.objects.filter(cart=cart).delete()
                 CartSetMenu.objects.filter(cart=cart).delete()
@@ -447,6 +452,8 @@ class TableOrderListView(APIView):
         }, status=200)
 
 class CallStaffAPIView(APIView):
+    permission_classes = []  # 기본은 인증 불필요 → 손님용 POST 가능
+
     def post(self, request):
         table_num = request.data.get("table_num")
         message = request.data.get("message", "직원 호출")
@@ -460,14 +467,14 @@ class CallStaffAPIView(APIView):
         booth = get_object_or_404(Booth, id=booth_id)
         table = get_object_or_404(Table, booth=booth, table_num=table_num)
 
-        # 🔥 호출 저장
+        # 호출 저장
         staff_call = StaffCall.objects.create(
             booth=booth,
             table=table,
             message=message
         )
 
-        # 🔥 웹소켓 전송
+        # 웹소켓 전송
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
             f"booth_{booth_id}_staff_calls",
@@ -487,13 +494,14 @@ class CallStaffAPIView(APIView):
             "data": {"message": message}
         }, status=200)
 
+    @permission_classes([permissions.IsAuthenticated])
     def get(self, request):
-        booth_id = request.headers.get("Booth-ID")
+        user = request.user
+        manager = getattr(user, "manager_profile", None)
+        if not manager:
+            return Response({"status": "fail", "message": "운영자 권한이 없습니다."}, status=403)
 
-        if not booth_id:
-            return Response({"message": "Booth-ID 헤더가 필요합니다."}, status=400)
-
-        booth = get_object_or_404(Booth, id=booth_id)
+        booth = manager.booth
 
         # 부스 전체 기준 최근 7개 호출만 가져오기
         calls = StaffCall.objects.filter(
