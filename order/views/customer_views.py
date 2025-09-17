@@ -450,86 +450,50 @@ class TableOrderListView(APIView):
         }, status=200)
 
 class CallStaffAPIView(APIView):
-    permission_classes = []  # 기본은 인증 불필요 → 손님용 POST 가능
-
     def post(self, request):
         table_num = request.data.get("table_num")
         message = request.data.get("message", "직원 호출")
         booth_id = request.headers.get("Booth-ID")
 
         if not table_num:
-            return Response({
-                "type": "ERROR",
-                "code": 400,
-                "message": "table_num 값이 필요합니다."
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"message": "table_num 값이 필요합니다."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         if not booth_id:
-            return Response({
-                "type": "ERROR",
-                "code": 400,
-                "message": "Booth-ID 헤더가 필요합니다."
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"message": "Booth-ID 헤더가 필요합니다."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        booth = get_object_or_404(Booth, id=booth_id)
-        table = get_object_or_404(Table, booth=booth, table_num=table_num)
+        table = get_object_or_404(Table, booth_id=booth_id, table_num=table_num)
 
-        # 호출 저장
+        # DB 기록 남기기
         staff_call = StaffCall.objects.create(
-            booth=booth,
+            booth_id=booth_id,
             table=table,
             message=message
         )
 
-        # 웹소켓 전송
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
             f"booth_{booth_id}_staff_calls",
             {
-                "type": "CALL_STAFF",
+                "type": "staff_call",
                 "tableNumber": table.table_num,
                 "boothId": booth_id,
-                "message": f"{table.table_num}번 테이블에서 직원을 호출했습니다!",
-                "createdAt": staff_call.created_at.isoformat()
+                "message": message,
+                "createdAt": staff_call.created_at.isoformat()  # 기록 시각도 같이 push
             }
         )
 
         return Response({
-            "type": "CALL_STAFF",
+            "message": "직원 호출이 전송되었습니다.",
+            "boothId": booth_id,
             "tableNumber": table.table_num,
-            "message": f"{table.table_num}번 테이블에서 직원을 호출했습니다!"
-        }, status=status.HTTP_200_OK)
-
-    def get(self, request):
-        # JWT 인증 확인
-        if not request.user.is_authenticated:
-            return Response({
-                "type": "ERROR",
-                "code": 401,
-                "message": "인증이 필요합니다."
-            }, status=status.HTTP_401_UNAUTHORIZED)
-
-        manager = getattr(request.user, "manager_profile", None)
-        if not manager:
-            return Response({
-                "type": "ERROR",
-                "code": 403,
-                "message": "운영자 권한이 없습니다."
-            }, status=status.HTTP_403_FORBIDDEN)
-
-        booth = manager.booth
-
-        # 부스 전체 기준 최근 7개 호출만 가져오기
-        calls = StaffCall.objects.filter(
-            booth=booth
-        ).order_by("-created_at")[:7]
-
-        return Response({
-            "status": "success",
-            "data": [
-                {
-                    "tableNumber": c.table.table_num,
-                    "createdAt": c.created_at.isoformat(),
-                } for c in calls
-            ]
+            "data": {
+                "message": message,
+                "createdAt": staff_call.created_at.isoformat()
+            }
         }, status=status.HTTP_200_OK)
