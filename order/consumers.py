@@ -277,3 +277,47 @@ class TableStatusConsumer(AsyncWebsocketConsumer):
             "type": "TABLE_STATUS_UPDATE",
             "data": event["data"]
         }))
+        
+# 총매출 웹소켓
+class RevenueConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        logger.info("RevenueConsumer: Connection attempt started.")
+        user = self.scope.get("user")
+
+        if not user or not user.is_authenticated:
+            logger.warning("RevenueConsumer: User not authenticated.")
+            return await self.close(code=4001)
+
+        try:
+            manager, booth = await get_manager_and_booth(user)
+            if not manager or not booth:
+                logger.warning(f"RevenueConsumer: No manager/booth for user {user.id}")
+                return await self.close(code=4003)
+
+            self.booth = booth
+            self.room_group_name = f"booth_{booth.id}_revenue"
+            await self.channel_layer.group_add(self.room_group_name, self.channel_name)
+            await self.accept()
+
+            # 최초 접속 시 snapshot 전송
+            await self.send(text_data=json.dumps({
+                "type": "REVENUE_SNAPSHOT",
+                "boothId": booth.id,
+                "totalRevenue": booth.total_revenues or 0,
+            }))
+
+            logger.info(f"RevenueConsumer: Connected for booth {booth.id}")
+        except Exception as e:
+            logger.error(f"RevenueConsumer connect error: {e}", exc_info=True)
+            return await self.close(code=5000)
+
+    async def disconnect(self, close_code):
+        if hasattr(self, "room_group_name"):
+            await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
+
+    async def revenue_update(self, event):
+        await self.send_json({
+            "type": "REVENUE_UPDATE",
+            "boothId": event["boothId"],
+            "totalRevenue": event["totalRevenue"],
+        })
