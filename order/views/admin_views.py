@@ -485,3 +485,28 @@ class OrderRevertStatusView(APIView):
                 "table_num": obj.order.table.table_num
             }
         }, status=200)
+        
+class StaffCallListAPIView(APIView):
+    permission_classes = [IsAuthenticated]  # JWT 인증 필수
+
+    def get(self, request):
+        manager = getattr(request.user, "manager_profile", None)
+        if not manager:
+            return Response(
+                {"status": "fail", "message": "운영자 권한이 없습니다."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        booth = manager.booth
+        calls = StaffCall.objects.filter(booth=booth).order_by("-created_at")[:7]
+
+        return Response({
+            "status": "success",
+            "data": [
+                {
+                    "tableNumber": c.table.table_num,
+                    "message": c.message,
+                    "createdAt": c.created_at.isoformat()
+                } for c in calls
+            ]
+        }, status=status.HTTP_200_OK)
