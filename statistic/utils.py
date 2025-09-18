@@ -8,6 +8,7 @@ from manager.models import Manager
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from datetime import timedelta
+from django.conf import settings
 
 
 def get_statistics(booth_id: int):
@@ -80,7 +81,11 @@ def get_statistics(booth_id: int):
         {
             "menu__menu_name": m["menu__menu_name"],
             "menu__menu_price": float(m["menu__menu_price"]),
-            "menu__menu_image": m["menu__menu_image"].url if m["menu__menu_image"] else None,
+            # 문자열 → URL 변환
+            "menu__menu_image": (
+                settings.MEDIA_URL + m["menu__menu_image"]
+                if m["menu__menu_image"] else None
+            ),
             "total_quantity": m["total_quantity"],
         }
         for m in top3
@@ -101,13 +106,18 @@ def get_statistics(booth_id: int):
         )
         .annotate(remaining=F("menu_amount") - F("reserved"))
         .filter(remaining__lte=5)
+        .values("menu_name", "menu_price", "menu_image", "remaining")
     )
     low_stock = [
         {
-            "menu_name": m.menu_name,
-            "menu_price": float(m.menu_price),
-            "menu_image": m.menu_image.url if m.menu_image else None,
-            "remaining": m.remaining,
+            "menu_name": m["menu_name"],
+            "menu_price": float(m["menu_price"]),
+            # 문자열 → URL 변환
+            "menu_image": (
+                settings.MEDIA_URL + m["menu_image"]
+                if m["menu_image"] else None
+            ),
+            "remaining": m["remaining"],
         }
         for m in low_stock_qs
     ]
