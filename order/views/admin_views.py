@@ -138,26 +138,21 @@ class OrderListView(APIView):
             }
         }, status=200)
 
-
-        
 class OrderCancelView(APIView):
     """
     관리자가 주문 항목을 취소하는 API
-    PATCH /orders/<order_id>/cancel/
+    PATCH /orders/cancel/
     """
 
     permission_classes = [IsAuthenticated]
 
-    def patch(self, request, order_id):
+    def patch(self, request):
         booth_id = request.headers.get("Booth-ID")
         if not booth_id:
             return Response(
                 {"status": "error", "code": 400, "message": "Booth-ID 헤더가 필요합니다."},
                 status=HTTP_400_BAD_REQUEST,
             )
-
-        # 주문 찾기
-        order = get_object_or_404(Order, pk=order_id, table__booth_id=booth_id)
 
         # 요청 데이터 validate
         serializer = CancelItemSerializer(
@@ -170,87 +165,149 @@ class OrderCancelView(APIView):
             with transaction.atomic():
                 total_refund = 0
                 updated_items = []
+                order = None  # order_id 대신 동적으로 찾음
 
                 for item in cancel_items:
-                    order_item_id = item["order_item_id"]
+                    order_item_ids = item["order_item_ids"]
                     cancel_qty = item["quantity"]
+                    item_type = item.get("type")
 
-                    # OrderMenu 취소
-                    om = OrderMenu.objects.filter(pk=order_item_id, order=order).first()
-                    if om:
-                        if cancel_qty == 0:
-                            cancel_qty = om.quantity
-                        if cancel_qty > om.quantity:
+                    if cancel_qty <= 0:
+                        continue
+
+                    for order_item_id in sorted(order_item_ids, reverse=True):
+                        if item_type == "menu":
+                            om = OrderMenu.objects.filter(pk=order_item_id).select_related("order", "menu").first()
+                            if not om:
+                                return Response(
+                                    {"status": "error", "code": 404,
+                                     "message": f"주문 메뉴 {order_item_id}를 찾을 수 없습니다."},
+                                    status=HTTP_404_NOT_FOUND,
+                                )
+
+                            # booth 검증
+                            if str(om.order.table.booth_id) != str(booth_id):
+                                return Response(
+                                    {"status": "error", "code": 403,
+                                     "message": "해당 부스의 주문이 아닙니다."},
+                                    status=403,
+                                )
+
+                            if order is None:
+                                order = om.order
+
+                            # 🚫 서빙 완료된 건 취소 불가
+                            if om.status == "served":
+                                return Response(
+                                    {"status": "error", "code": 400,
+                                     "message": f"'{om.menu.menu_name}' 은 이미 서빙 완료된 주문이라 취소할 수 없습니다."},
+                                    status=HTTP_400_BAD_REQUEST,
+                                )
+
+                            qty_to_cancel = min(cancel_qty, om.quantity)
+
+                            # 재고 복원
+                            menu = om.menu
+                            menu.menu_amount += qty_to_cancel
+                            menu.save()
+
+                            refund_amount = om.fixed_price * qty_to_cancel
+                            total_refund += refund_amount
+
+                            om.quantity -= qty_to_cancel
+                            if om.quantity == 0:
+                                om.delete()
+                            else:
+                                om.save()
+
+                            updated_items.append({
+                                "order_menu_id": order_item_id,
+                                "menu_name": menu.menu_name,
+                                "rest_quantity": om.quantity if om.id else 0,
+                                "restored_stock": qty_to_cancel,
+                                "refund": refund_amount,
+                            })
+
+                            cancel_qty -= qty_to_cancel
+                            if cancel_qty <= 0:
+                                break
+                            continue
+
+                        elif item_type == "set":
+                            osm = OrderSetMenu.objects.filter(pk=order_item_id).select_related("order", "set_menu").first()
+                            if not osm:
+                                return Response(
+                                    {"status": "error", "code": 404,
+                                     "message": f"세트 주문 {order_item_id}를 찾을 수 없습니다."},
+                                    status=HTTP_404_NOT_FOUND,
+                                )
+
+                            if str(osm.order.table.booth_id) != str(booth_id):
+                                return Response(
+                                    {"status": "error", "code": 403,
+                                     "message": "해당 부스의 주문이 아닙니다."},
+                                    status=403,
+                                )
+
+                            if order is None:
+                                order = osm.order
+
+                            # 🚫 서빙 완료된 건 취소 불가
+                            if osm.status == "served":
+                                return Response(
+                                    {"status": "error", "code": 400,
+                                     "message": f"세트 '{osm.set_menu.set_name}' 은 이미 서빙 완료된 주문이라 취소할 수 없습니다."},
+                                    status=HTTP_400_BAD_REQUEST,
+                                )
+
+                            qty_to_cancel = min(cancel_qty, osm.quantity)
+
+                            refund_amount = osm.fixed_price * qty_to_cancel
+                            total_refund += refund_amount
+
+                            # 세트 구성품 재고 복원
+                            for si in SetMenuItem.objects.filter(set_menu=osm.set_menu):
+                                restore_qty = si.quantity * qty_to_cancel
+                                si.menu.menu_amount += restore_qty
+                                si.menu.save()
+
+                            osm.quantity -= qty_to_cancel
+                            if osm.quantity == 0:
+                                osm.delete()
+                            else:
+                                osm.save()
+
+                            updated_items.append({
+                                "order_setmenu_id": order_item_id,
+                                "set_name": osm.set_menu.set_name,
+                                "rest_quantity": osm.quantity if osm.id else 0,
+                                "restored_stock": qty_to_cancel,
+                                "refund": refund_amount,
+                                "table_num": osm.order.table.table_num,
+                            })
+
+                            cancel_qty -= qty_to_cancel
+                            if cancel_qty <= 0:
+                                break
+                            continue
+
+                        else:
                             return Response(
-                                {"status": "error", "code": 400,
-                                "message": f"취소 수량({cancel_qty})이 주문 수량({om.quantity})을 초과합니다."},
+                                {"status": "error", "code": 400, "message": "type은 'menu' 또는 'set'이어야 합니다."},
                                 status=HTTP_400_BAD_REQUEST,
                             )
 
-                        # 재고 복원
-                        menu = om.menu
-                        menu.menu_amount += cancel_qty
-                        menu.save()
+                    if cancel_qty > 0:
+                        return Response(
+                            {"status": "error", "code": 400,
+                             "message": f"취소할 수량이 실제 주문 수량보다 많습니다. 남은 {cancel_qty}개 취소 불가."},
+                            status=HTTP_400_BAD_REQUEST,
+                        )
 
-                        refund_amount = om.fixed_price * cancel_qty
-                        total_refund += refund_amount
-
-                        om.quantity -= cancel_qty
-                        if om.quantity == 0:
-                            om.delete()
-                        else:
-                            om.save()
-
-                        updated_items.append({
-                            "order_menu_id": order_item_id,
-                            "menu_name": menu.menu_name,
-                            "rest_quantity": om.quantity if om.id else 0,
-                            "restored_stock": cancel_qty,
-                            "refund": refund_amount,
-                        })
-                        continue
-
-                    # OrderSetMenu 취소
-                    osm = OrderSetMenu.objects.filter(pk=order_item_id, order=order).first()
-                    if osm:
-                        if cancel_qty == 0:
-                            cancel_qty = osm.quantity
-                        if cancel_qty > osm.quantity:
-                            return Response(
-                                {"status": "error", "code": 400,
-                                "message": f"취소 수량({cancel_qty})이 세트 수량({osm.quantity})을 초과합니다."},
-                                status=HTTP_400_BAD_REQUEST,
-                            )
-
-                        refund_amount = osm.fixed_price * cancel_qty
-                        total_refund += refund_amount
-
-                        # 세트 구성품 재고 복원
-                        for si in SetMenuItem.objects.filter(set_menu=osm.set_menu):
-                            restore_qty = si.quantity * cancel_qty
-                            si.menu.menu_amount += restore_qty
-                            si.menu.save()
-
-                        osm.quantity -= cancel_qty
-                        if osm.quantity == 0:
-                            osm.delete()
-                        else:
-                            osm.save()
-
-                        updated_items.append({
-                            "order_setmenu_id": order_item_id,
-                            "set_name": osm.set_menu.set_name,
-                            "rest_quantity": osm.quantity if osm.id else 0,
-                            "restored_stock": cancel_qty,
-                            "refund": refund_amount,
-                            "table_num": order.table.table_num
-                        })
-                        continue
-
+                if not order:
                     return Response(
-                        {"status": "error", "code": 404,
-                        "message": f"order_item_id {order_item_id}에 해당하는 주문 항목을 찾을 수 없습니다."},
-                        status=HTTP_404_NOT_FOUND,
+                        {"status": "error", "code": 400, "message": "유효한 주문 항목을 찾을 수 없습니다."},
+                        status=HTTP_400_BAD_REQUEST,
                     )
 
                 # 주문 총액, 부스 매출 차감
@@ -260,18 +317,13 @@ class OrderCancelView(APIView):
                 booth = order.table.booth
                 booth.total_revenues = max((booth.total_revenues or 0) - total_refund, 0)
                 booth.save()
-                
+
                 from order.utils.order_broadcast import broadcast_total_revenue
                 broadcast_total_revenue(booth.id, booth.total_revenues)
-                
-                
-                
 
-                # 통계 push
                 from statistic.utils import push_statistics
                 push_statistics(booth.id)
 
-                # 주문 취소 후 운영자 페이지에 실시간 전송
                 broadcast_order_update(order)
 
                 return Response(
@@ -296,6 +348,8 @@ class OrderCancelView(APIView):
             return Response(
                 {"status": "error", "code": 500, "message": str(e)}, status=500
             )
+
+
 
 class KitchenOrderCookedView(APIView):
     """

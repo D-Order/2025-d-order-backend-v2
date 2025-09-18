@@ -96,5 +96,9 @@ class OrderCouponConfirmSerializer(serializers.Serializer):
 
 
 class CancelItemSerializer(serializers.Serializer):
-    order_item_id = serializers.IntegerField()
-    quantity = serializers.IntegerField(min_value=0)
+    type = serializers.ChoiceField(choices=["menu", "set"])
+    order_item_ids = serializers.ListField(
+        child=serializers.IntegerField(), allow_empty=False
+    )
+    quantity = serializers.IntegerField()
+
