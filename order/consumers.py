@@ -318,8 +318,8 @@ class RevenueConsumer(AsyncWebsocketConsumer):
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
     async def revenue_update(self, event):
-        await self.send_json({
+        await self.send(text_data=json.dumps({
             "type": "REVENUE_UPDATE",
             "boothId": int(event["boothId"]),
             "totalRevenue": int(event["totalRevenue"] or 0),  # Decimal → int 변환
-        })
+        }))
