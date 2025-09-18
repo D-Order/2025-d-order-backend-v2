@@ -9,7 +9,6 @@ class OrderSerializer(serializers.ModelSerializer):
 
 
 class OrderMenuSerializer(serializers.ModelSerializer):
-    status = serializers.SerializerMethodField()   # ✅ DB값 그대로 안 쓰고 보정 로직 적용
     menu_name = serializers.CharField(source='menu.menu_name')
     menu_price = serializers.IntegerField(source='menu.menu_price')
     menu_image = serializers.SerializerMethodField()
@@ -53,7 +52,6 @@ class OrderMenuSerializer(serializers.ModelSerializer):
 class OrderSetMenuSerializer(serializers.ModelSerializer):
     menu_name = serializers.CharField(source='set_menu.set_name')
     menu_price = serializers.IntegerField(source='set_menu.set_price')
-    status = serializers.SerializerMethodField()   # ✅ 보정 로직 추가
     menu_image = serializers.SerializerMethodField()
     table_num = serializers.IntegerField(source='order.table.table_num')
     created_at = serializers.DateTimeField(source='order.created_at')
@@ -68,7 +66,6 @@ class OrderSetMenuSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at', 'order_amount',
             'order_id', 'table_num', 'menu_image'
         ]
-
 
     def get_menu_image(self, obj):
         """이미지 파일이 없으면 None을 반환"""
