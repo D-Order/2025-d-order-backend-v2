@@ -57,7 +57,7 @@ def get_table_statuses(user):
 
             if table.activated_at and manager.table_limit_hours:
                 elapsed = timezone.now() - table.activated_at
-                limit = timedelta(hours=manager.table_limit_hours)
+                limit = timedelta(minutes=manager.table_limit_hours)
 
                 total_seconds = (limit - elapsed).total_seconds()
                 remaining_minutes = max(0, math.ceil(total_seconds / 60))
