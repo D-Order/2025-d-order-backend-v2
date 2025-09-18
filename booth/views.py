@@ -254,11 +254,12 @@ class TableListView(APIView):
             ).select_related("menu", "order")
 
             for om in order_menus:
-                key = f"menu_{om.menu_id}"
+                key = f"menu_{om.menu_id}_{om.fixed_price}"
                 if key not in aggregated:
                     aggregated[key] = {
                         "menu_name": "테이블 이용료(인당)" if om.menu.menu_category == "seat_fee" else om.menu.menu_name,
                         "quantity": 0,
+                        "fixed_price": om.fixed_price,
                         "latest_created_at": om.order.created_at,
                     }
                 aggregated[key]["quantity"] += om.quantity
@@ -272,11 +273,12 @@ class TableListView(APIView):
             ).select_related("set_menu", "order")
 
             for osm in order_sets:
-                key = f"set_{osm.set_menu_id}"
+                key = f"set_{osm.set_menu_id}_{osm.fixed_price}"
                 if key not in aggregated:
                     aggregated[key] = {
                         "menu_name": osm.set_menu.set_name,
                         "quantity": 0,
+                        "fixed_price": osm.fixed_price,
                         "latest_created_at": osm.order.created_at,
                     }
                 aggregated[key]["quantity"] += osm.quantity
@@ -356,7 +358,7 @@ class TableDetailView(APIView):
         ).select_related("menu", "order")
 
         for om in order_menus:
-            key = f"menu_{om.menu_id}"
+            key = f"menu_{om.menu_id}_{om.fixed_price}"
             if key not in aggregated:
                 aggregated[key] = {
                     "type": "menu",
@@ -368,11 +370,15 @@ class TableDetailView(APIView):
                     "status": om.status,
                     "menu_image": om.menu.menu_image.url if om.menu.menu_image else None,
                     "menu_category": om.menu.menu_category,
+                    "order_id": om.order_id, 
+                    "order_menu_ids": [],
                     "latest_created_at": om.order.created_at,
                 }
             aggregated[key]["quantity"] += om.quantity
+            aggregated[key]["order_menu_ids"].append(om.id)
             if om.order.created_at > aggregated[key]["latest_created_at"]:
                 aggregated[key]["latest_created_at"] = om.order.created_at
+                aggregated[key]["order_id"] = om.order_id
 
         # ✅ 세트 메뉴 합산
         order_sets = OrderSetMenu.objects.filter(
@@ -380,7 +386,7 @@ class TableDetailView(APIView):
         ).select_related("set_menu", "order")
 
         for osm in order_sets:
-            key = f"set_{osm.set_menu_id}"
+            key = f"set_{osm.set_menu_id}_{osm.fixed_price}"
             if key not in aggregated:
                 aggregated[key] = {
                     "type": "setmenu",
@@ -391,11 +397,15 @@ class TableDetailView(APIView):
                     "quantity": 0,
                     "status": osm.status,
                     "set_image": osm.set_menu.set_image.url if osm.set_menu.set_image else None,
+                    "order_id": osm.order_id,
+                    "order_setmenu_ids": [],
                     "latest_created_at": osm.order.created_at,
                 }
             aggregated[key]["quantity"] += osm.quantity
+            aggregated[key]["order_setmenu_ids"].append(osm.id) 
             if osm.order.created_at > aggregated[key]["latest_created_at"]:
                 aggregated[key]["latest_created_at"] = osm.order.created_at
+                aggregated[key]["order_id"] = osm.order_id
 
         # ✅ 최신순 정렬
         orders_json = sorted(

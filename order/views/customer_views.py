@@ -405,7 +405,7 @@ class TableOrderListView(APIView):
         ).select_related("menu", "order")
 
         for om in order_menus:
-            key = f"menu_{om.menu_id}"
+            key = f"menu_{om.menu_id}_{om.fixed_price}"
             if key not in aggregated:
                 aggregated[key] = {
                     "type": "menu",
@@ -426,7 +426,7 @@ class TableOrderListView(APIView):
         ).select_related("set_menu", "order")
 
         for osm in order_sets:
-            key = f"set_{osm.set_menu_id}"
+            key = f"set_{osm.set_menu_id}_{osm.fixed_price}"
             if key not in aggregated:
                 aggregated[key] = {
                     "type": "setmenu",
