@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     'cart',
     'coupon',
     'statistic',
+    'public',
 
     #drf
     'rest_framework',

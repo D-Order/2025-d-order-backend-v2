@@ -34,6 +34,7 @@ urlpatterns = [
     path('api/v2/cart/', include('cart.urls')),
     path('api/v2/coupons/', include('coupon.urls')),
     path("api/v2/statistic/", include("statistic.urls")),
+    path("api/v2/public/", include("public.urls")),  # ✅ 마운트
 
     #access 토근 재발급용 API
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
