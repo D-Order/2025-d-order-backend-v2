@@ -316,14 +316,20 @@ class KitchenOrderCookedView(APIView):
 
         if item_type == "menu":
             obj = get_object_or_404(OrderMenu, pk=item_id)
-            if obj.status != "pending":
+
+            # ✅ 음료 특수 처리: pending → cooked 자동 허용
+            if obj.menu.menu_category == "음료" and obj.status == "pending":
+                obj.status = "cooked"
+                obj.save(update_fields=["status"])
+
+            elif obj.status != "pending":
                 return Response(
                     {"status": "error", "code": 400, "message": "대기 상태가 아닌 메뉴는 조리 완료 불가"},
                     status=400
                 )
-
-            obj.status = "cooked"
-            obj.save(update_fields=["status"])
+            else:
+                obj.status = "cooked"
+                obj.save(update_fields=["status"])
 
             # 세트 동기화
             if obj.ordersetmenu_id:
@@ -386,6 +392,7 @@ class ServingOrderCompleteView(APIView):
         if item_type == "menu":
             obj = get_object_or_404(OrderMenu, pk=item_id)
 
+            # ✅ 음료면 pending, cooked 둘 다 허용
             if obj.menu.menu_category == "음료":
                 allowed = ["pending", "cooked"]
             else:
@@ -426,10 +433,10 @@ class ServingOrderCompleteView(APIView):
             obj.status = "served"
             obj.save(update_fields=["status"])
 
-        # 직렬화 (중복 제거)
+        # 직렬화
         data = OrderMenuSerializer(obj).data if isinstance(obj, OrderMenu) else OrderSetMenuSerializer(obj).data
 
-        ### 수정: 단건 broadcast
+        # 단건 broadcast
         if isinstance(obj, OrderMenu):
             broadcast_order_item_update(obj)
         else:
