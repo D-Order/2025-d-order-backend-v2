@@ -16,7 +16,7 @@ def expand_order(order: Order):
         if om.menu.menu_category not in VISIBLE_MENU_CATEGORIES:
             continue
         # 서빙 완료 후 10초 지난 건 제외
-        if om.status == "served" and om.updated_at <= now() - timedelta(seconds=10):
+        if om.status == "served" and om.updated_at <= now() - timedelta(seconds=60):
             continue
 
         # 여기서 음료일 경우 status 강제로 cooked 처리
@@ -46,7 +46,7 @@ def expand_order(order: Order):
         for om in order_menus:
             if om.menu.menu_category not in VISIBLE_MENU_CATEGORIES:
                 continue
-            if om.status == "served" and om.updated_at <= now() - timedelta(seconds=10):
+            if om.status == "served" and om.updated_at <= now() - timedelta(seconds=60):
                 continue
 
             # 세트 구성품도 음료면 cooked 처리
