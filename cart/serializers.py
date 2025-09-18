@@ -63,8 +63,8 @@ class CartSetMenuSerializer(serializers.ModelSerializer):
         세트에 포함된 개별 메뉴들의 원가격 총합 계산
         (메뉴 가격 × 수량) 모두 더한 값
         """
-        items = obj.set_menu.setmenuitem_set.all()
-        return sum(item.menu.menu_price * item.quantity for item in items)
+        items = obj.set_menu.menu_items.all()  # ← related_name='menu_items' 사용
+        return sum((item.menu.menu_price or 0) * item.quantity for item in items)
 
 
 class CartDetailSerializer(serializers.ModelSerializer):
