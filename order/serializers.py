@@ -34,14 +34,6 @@ class OrderMenuSerializer(serializers.ModelSerializer):
             'from_set', 'set_id', 'set_name'
         ]
 
-    def get_status(self, obj):
-        # ✅ 상태 보정 로직: served는 그대로, 음료 pending은 cooked
-        if obj.status == "served":
-            return "served"
-        elif obj.menu.menu_category == "음료" and obj.status == "pending":
-            return "cooked"
-        return obj.status
-
     def get_menu_image(self, obj):
         """이미지 파일이 없으면 None을 반환"""
         if obj.menu.menu_image and hasattr(obj.menu.menu_image, 'url'):
@@ -77,11 +69,6 @@ class OrderSetMenuSerializer(serializers.ModelSerializer):
             'order_id', 'table_num', 'menu_image'
         ]
 
-    def get_status(self, obj):
-        # ✅ 세트 본체도 보정 규칙 동일 적용
-        if obj.status == "served":
-            return "served"
-        return obj.status
 
     def get_menu_image(self, obj):
         """이미지 파일이 없으면 None을 반환"""
