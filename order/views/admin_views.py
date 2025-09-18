@@ -457,6 +457,14 @@ class OrderRevertStatusView(APIView):
 
         prev_status = obj.status
         allowed = {"cooked": "pending", "served": "cooked"}
+        
+        # 음료일 경우 특수 규칙 추가
+        if obj.menu.menu_category == "음료":
+            allowed["served"] = "pending"   # served → pending 바로 허용
+
+        if prev_status not in allowed or allowed[prev_status] != target_status:
+            return Response({"status": "error", "code": 400,
+                            "message": f"{prev_status} → {target_status} 되돌리기 불가"}, status=400)
 
         if prev_status not in allowed or allowed[prev_status] != target_status:
             return Response({"status": "error", "code": 400,
