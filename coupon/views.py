@@ -55,26 +55,31 @@ class CouponListCreateView(generics.GenericAPIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        used_subq = CouponCode.objects.filter(coupon=OuterRef("pk"), used_at__isnull=False)
         qs = (
             Coupon.objects.filter(booth=booth)
-            .annotate(is_used=Exists(used_subq))
-            .order_by("-created_at", "-id")
+            .only("id","coupon_name","discount_type","discount_value",
+                "created_at","initial_quantity","quantity")
+            .order_by("-created_at","-id")
         )
 
-        items = [
-            {
+        items = []
+        for c in qs:
+            total = int(c.initial_quantity or 0)
+            remaining = int(c.quantity or 0)
+            items.append({
                 "coupon_id": c.id,
                 "coupon_name": c.coupon_name,
                 "discount_type": c.discount_type,
                 "discount_value": c.discount_value,
                 "created_at": c.created_at,
-                "is_used": bool(getattr(c, "is_used", False)),
-            }
-            for c in qs
-        ]
+                "total_count": total,
+                "remaining_count": remaining,
+                
+            })
+
         data = CouponListItemSerializer(items, many=True).data
         return Response({"status": "success", "code": 200, "data": data})
+
 
     def post(self, request):
         booth = get_booth_or_403(request)
@@ -95,7 +100,8 @@ class CouponListCreateView(generics.GenericAPIView):
                 coupon_description=data["coupon_description"],
                 discount_type=data["discount_type"],
                 discount_value=data["discount_value"],
-                quantity=data["quantity"],
+                initial_quantity=data["quantity"],
+                quantity=data["quantity"]
             )
             codes = generate_unique_codes(n=data["quantity"], length=5)
             CouponCode.objects.bulk_create(
@@ -141,17 +147,20 @@ class CouponDetailView(generics.GenericAPIView):
         total_codes = CouponCode.objects.filter(coupon=coupon).count()
         used_codes = CouponCode.objects.filter(coupon=coupon, used_at__isnull=False).count()
         unused_codes = total_codes - used_codes
-
+        total = int(coupon.initial_quantity or 0)
+        remaining = int(coupon.quantity or 0)
         data = {
             "coupon_id": coupon.id,
             "coupon_name": coupon.coupon_name,
             "coupon_description": coupon.coupon_description,
             "discount_type": coupon.discount_type,
             "discount_value": coupon.discount_value,
-            "quantity": coupon.quantity,
             "created_at": coupon.created_at,
             "used_count": used_codes,
             "unused_count": unused_codes,
+            "total_count": total,
+            "remaining_count": remaining,
+            
         }
         return Response({"status": "success", "code": 200, "data": data})
 
