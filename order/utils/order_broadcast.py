@@ -18,13 +18,8 @@ def expand_order(order: Order):
         if om.status == "served" and om.updated_at <= now() - timedelta(seconds=60):
             continue
 
-        # served는 그대로 두고, 그 외 음료만 cooked 강제 처리
-        if om.status == "served":
-            status = "served"
-        elif om.menu.menu_category == "음료" and om.status == "pending":
-            status = "cooked"   # 음료 pending → cooked 로만 보정
-        else:
-            status = om.status
+        # ✅ 보정 삭제: DB status 그대로 사용
+        status = om.status
 
         expanded.append({
             "ordermenu_id": om.id,
@@ -53,13 +48,8 @@ def expand_order(order: Order):
             if om.status == "served" and om.updated_at <= now() - timedelta(seconds=60):
                 continue
 
-            # 세트 구성품도 동일하게 처리
-            if om.status == "served":
-                status = "served"
-            elif om.menu.menu_category == "음료" and om.status == "pending":
-                status = "cooked"   # 음료 pending → cooked 로만 보정
-            else:
-                status = om.status
+            # ✅ 보정 삭제
+            status = om.status
 
             expanded.append({
                 "ordermenu_id": om.id,
@@ -84,14 +74,8 @@ def broadcast_order_item_update(ordermenu: OrderMenu):
     booth = ordermenu.order.table.booth
     channel_layer = get_channel_layer()
     
-    # status 보정 로직 추가
-    if ordermenu.status == "served":
-        status = "served"
-    elif ordermenu.menu.menu_category == "음료" and ordermenu.status == "pending":
-        status = "cooked"   # 음료 pending만 cooked 처리
-    else:
-        status = ordermenu.status
-
+    # ✅ 보정 삭제
+    status = ordermenu.status
 
     data = {
         "ordermenu_id": ordermenu.id,
@@ -125,10 +109,7 @@ def broadcast_order_set_update(orderset: OrderSetMenu):
     channel_layer = get_channel_layer()
 
     # 세트 본체 데이터
-    if orderset.status == "served":
-        set_status = "served"
-    else:
-        set_status = orderset.status
+    set_status = orderset.status
 
     set_data = {
         "ordersetmenu_id": orderset.id,
@@ -156,13 +137,8 @@ def broadcast_order_set_update(orderset: OrderSetMenu):
         if om.menu.menu_category not in VISIBLE_MENU_CATEGORIES:
             continue
 
-        # 상태 보정 (expand_order와 동일하게 적용)
-        if om.status == "served":
-            status = "served"
-        elif om.menu.menu_category == "음료" and om.status == "pending":
-            status = "cooked"
-        else:
-            status = om.status
+        # ✅ 보정 삭제
+        status = om.status
 
         item_data = {
             "ordermenu_id": om.id,
@@ -186,7 +162,6 @@ def broadcast_order_set_update(orderset: OrderSetMenu):
                 "data": item_data,
             }
         )
-
 
 
 def broadcast_order_update(order: Order):
