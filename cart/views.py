@@ -516,6 +516,13 @@ class ApplyCouponView(APIView):
         if not cart:
             return Response({"status": "fail", "code": 404, "message": "활성화된 장바구니가 없습니다."},
                             status=status.HTTP_404_NOT_FOUND)
+            
+        # ✅ [추가] 기존 쿠폰 전부 해제
+        CouponCode.objects.filter(issued_to_table=table, used_at__isnull=True).update(issued_to_table=None)
+        TableCoupon.objects.filter(table=table, used_at__isnull=True).delete()
+        cart.applied_coupon = None
+        cart.save(update_fields=['applied_coupon'])
+
 
         # 3️⃣ 요청 Body 파싱
         serializer = ApplyCouponSerializer(data=request.data)
