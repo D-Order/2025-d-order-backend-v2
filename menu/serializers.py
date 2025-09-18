@@ -126,8 +126,13 @@ class SetMenuSerializer(serializers.ModelSerializer):
     
      # 👇 추가: 세트메뉴 안의 메뉴 중 가장 적은 재고 구하기
     def get_min_menu_amount(self, obj):
-        amounts = [item.menu.menu_amount for item in obj.menu_items.all()]
-        return min(amounts) if amounts else 0
+        set_items = obj.menu_items.all()  # SetMenuItem queryset
+        if not set_items:
+            return 0
+        return min(
+            (item.menu.menu_amount // item.quantity) if item.quantity > 0 else 0
+            for item in set_items
+        )
     
     def validate(self, data):
         booth = self.context.get('booth')
