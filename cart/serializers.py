@@ -34,11 +34,12 @@ class CartSetMenuSerializer(serializers.ModelSerializer):
     original_price = serializers.SerializerMethodField()  # 구성 메뉴 원가격 합산
     menu_image = serializers.SerializerMethodField()
     is_soldout = serializers.SerializerMethodField()
+    min_menu_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = CartSetMenu
         # 원래 menu_price 대신 discounted_price + original_price 포함
-        fields = ['id', 'menu_name', 'original_price', 'discounted_price', 'quantity', 'menu_image', 'is_soldout']
+        fields = ['id', 'menu_name', 'original_price', 'discounted_price', 'quantity', 'min_menu_amount','menu_image', 'is_soldout']
 
     def get_menu_image(self, obj):
         """세트메뉴 이미지 절대 경로 반환"""
@@ -47,6 +48,13 @@ class CartSetMenuSerializer(serializers.ModelSerializer):
             url = obj.set_menu.set_image.url
             return request.build_absolute_uri(url) if request else url
         return None
+    
+    def get_min_menu_amount(self, obj):
+        set_items = SetMenuItem.objects.filter(set_menu=obj.set_menu)
+        return min(
+            [item.menu.menu_amount // item.quantity for item in set_items if item.quantity > 0],
+            default=0
+        )
 
     def get_is_soldout(self, obj):
         """

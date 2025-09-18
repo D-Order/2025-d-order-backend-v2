@@ -263,6 +263,9 @@ class OrderCancelView(APIView):
                 
                 from order.utils.order_broadcast import broadcast_total_revenue
                 broadcast_total_revenue(booth.id, booth.total_revenues)
+                
+                
+                
 
                 # 통계 push
                 from statistic.utils import push_statistics

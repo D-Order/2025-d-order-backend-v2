@@ -67,9 +67,26 @@ class CartDetailView(APIView):
                 table_fee += cm.menu.menu_price * cm.quantity
             else:
                 subtotal += cm.menu.menu_price * cm.quantity
+                
+        set_menu_data = []
 
         for cs in CartSetMenu.objects.filter(cart=cart).select_related("set_menu"):
             subtotal += cs.set_menu.set_price * cs.quantity
+            
+            set_items = SetMenuItem.objects.filter(set_menu=cs.set_menu)
+            # ✅ 세트메뉴의 최소 구매 가능 수량 (구성 메뉴별 재고 ÷ 세트에서 필요한 수량)
+            min_menu_amount = min(
+                [item.menu.menu_amount // item.quantity for item in set_items if item.quantity > 0],
+                default=0
+    )
+            
+            set_menu_data.append({
+                "id": cs.set_menu.id,
+                "name": cs.set_menu.set_name,
+                "price": cs.set_menu.set_price,
+                "quantity": cs.quantity,
+                "min_menu_amount": min_menu_amount,  # ✅ 추가
+            })
 
         return Response({
             "status": "success",
@@ -120,7 +137,8 @@ class CartAddView(APIView):
             }, status=HTTP_400_BAD_REQUEST)
 
         cart, _ = Cart.objects.get_or_create(table=table, is_ordered=False)
-
+        
+        
         # ------------------- 일반 메뉴 -------------------
         if type_ == "menu":
             menu = get_object_or_404(Menu, pk=item_id, booth_id=booth_id)
@@ -150,6 +168,7 @@ class CartAddView(APIView):
             set_menu = get_object_or_404(SetMenu, pk=item_id, booth_id=booth_id)
             set_items = SetMenuItem.objects.filter(set_menu=set_menu)
             for item in set_items:
+                print("DEBUG:", item.menu.menu_name, item.menu.menu_amount, "필요:", item.quantity * quantity)
                 total_required = item.quantity * quantity
                 if item.menu.menu_amount < total_required:
                     return Response({
@@ -166,7 +185,12 @@ class CartAddView(APIView):
             if not created:
                 new_qty = cart_item.quantity + quantity
                 # 각 구성 메뉴 재고 재검증
+                print("DEBUG cart_item.quantity:", cart_item.quantity)
+                print("DEBUG 요청 quantity:", quantity)
+                print("DEBUG new_qty:", new_qty)
                 for item in set_items:
+                    print("DEBUG", item.menu.menu_name, "재고:", item.menu.menu_amount, "필요:", item.quantity * new_qty)
+                
                     total_required = item.quantity * new_qty
                     if item.menu.menu_amount < total_required:
                         return Response({
@@ -223,6 +247,8 @@ class CartAddView(APIView):
             menu_name = fee_menu.menu_name
             menu_price = fee_price
             menu_image = None
+            
+            
 
         else:
             return Response({"status": "fail", "message": "type은 menu 또는 set_menu이어야 합니다."},
