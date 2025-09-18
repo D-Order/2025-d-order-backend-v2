@@ -18,7 +18,7 @@ def expand_order(order: Order):
         if om.status == "served" and om.updated_at <= now() - timedelta(seconds=60):
             continue
 
-        # ✅ served는 그대로 두고, 그 외 음료만 cooked 강제 처리
+        # served는 그대로 두고, 그 외 음료만 cooked 강제 처리
         if om.status == "served":
             status = "served"
         elif om.menu.menu_category == "음료":
@@ -53,7 +53,7 @@ def expand_order(order: Order):
             if om.status == "served" and om.updated_at <= now() - timedelta(seconds=60):
                 continue
 
-            # ✅ 세트 구성품도 동일하게 처리
+            # 세트 구성품도 동일하게 처리
             if om.status == "served":
                 status = "served"
             elif om.menu.menu_category == "음료":
@@ -79,10 +79,18 @@ def expand_order(order: Order):
     return expanded
 
 
-# ✅ 새로 추가: 단건 OrderMenu broadcast
+# 새로 추가: 단건 OrderMenu broadcast
 def broadcast_order_item_update(ordermenu: OrderMenu):
     booth = ordermenu.order.table.booth
     channel_layer = get_channel_layer()
+    
+    # status 보정 로직 추가
+    if ordermenu.status == "served":
+        status = "served"
+    elif ordermenu.menu.menu_category == "음료":
+        status = "cooked"
+    else:
+        status = ordermenu.status
 
     data = {
         "ordermenu_id": ordermenu.id,
@@ -91,7 +99,7 @@ def broadcast_order_item_update(ordermenu: OrderMenu):
         "menu_name": ordermenu.menu.menu_name,
         "menu_image": ordermenu.menu.menu_image.url if ordermenu.menu.menu_image else None,
         "quantity": ordermenu.quantity,
-        "status": ordermenu.status,
+        "status": status,
         "created_at": ordermenu.order.created_at.isoformat(),
         "table_num": ordermenu.order.table.table_num,
         "from_set": ordermenu.ordersetmenu_id is not None,
@@ -110,10 +118,15 @@ def broadcast_order_item_update(ordermenu: OrderMenu):
     )
 
 
-# ✅ 새로 추가: 단건 OrderSetMenu broadcast
+# 새로 추가: 단건 OrderSetMenu broadcast
 def broadcast_order_set_update(orderset: OrderSetMenu):
     booth = orderset.order.table.booth
     channel_layer = get_channel_layer()
+    
+    if orderset.status == "served":
+        status = "served"
+    else:
+        status = orderset.status
 
     data = {
         "ordersetmenu_id": orderset.id,
@@ -121,7 +134,7 @@ def broadcast_order_set_update(orderset: OrderSetMenu):
         "set_name": orderset.set_menu.set_name,
         "set_id": orderset.set_menu.id,
         "quantity": orderset.quantity,
-        "status": orderset.status,
+        "status": status,
         "created_at": orderset.order.created_at.isoformat(),
         "table_num": orderset.order.table.table_num,
     }
