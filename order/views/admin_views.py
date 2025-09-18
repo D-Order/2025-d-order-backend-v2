@@ -385,9 +385,15 @@ class ServingOrderCompleteView(APIView):
 
         if item_type == "menu":
             obj = get_object_or_404(OrderMenu, pk=item_id)
-            if obj.status != "cooked":
+
+            if obj.menu.menu_category == "음료":
+                allowed = ["pending", "cooked"]
+            else:
+                allowed = ["cooked"]
+
+            if obj.status not in allowed:
                 return Response(
-                    {"status": "error", "code": 400, "message": "조리 완료 상태가 아닌 메뉴는 서빙 완료할 수 없습니다."},
+                    {"status": "error", "code": 400, "message": f"{allowed} 상태에서만 서빙 완료할 수 있습니다."},
                     status=400
                 )
 
@@ -447,29 +453,43 @@ class OrderRevertStatusView(APIView):
         target_status = request.data.get("target_status")
 
         if not item_id or target_status not in ["pending", "cooked"]:
-            return Response({"status": "error", "code": 400,
-                            "message": "id, target_status(pending|cooked) 필수"}, status=400)
+            return Response(
+                {"status": "error", "code": 400,
+                "message": "id, target_status(pending|cooked) 필수"},
+                status=400
+            )
 
         obj = OrderMenu.objects.filter(pk=item_id).first()
         if not obj:
-            return Response({"status": "error", "code": 404,
-                            "message": f"OrderMenu {item_id} 찾을 수 없음"}, status=404)
+            return Response(
+                {"status": "error", "code": 404,
+                "message": f"OrderMenu {item_id} 찾을 수 없음"},
+                status=404
+            )
 
         prev_status = obj.status
-        allowed = {"cooked": "pending", "served": "cooked"}
-        
-        # 음료일 경우 특수 규칙 추가
+
+        # --- 허용 전이 규칙 정의 ---
         if obj.menu.menu_category == "음료":
-            allowed["served"] = "pending"   # served → pending 바로 허용
+            allowed = {
+                "cooked": ["pending"],
+                "served": ["cooked", "pending"],  # 음료는 served → cooked / pending 둘 다 허용
+            }
+        else:
+            allowed = {
+                "cooked": ["pending"],
+                "served": ["cooked"],
+            }
 
-        if prev_status not in allowed or allowed[prev_status] != target_status:
-            return Response({"status": "error", "code": 400,
-                            "message": f"{prev_status} → {target_status} 되돌리기 불가"}, status=400)
+        # --- 유효성 검사 ---
+        if target_status not in allowed.get(prev_status, []):
+            return Response(
+                {"status": "error", "code": 400,
+                "message": f"{prev_status} → {target_status} 되돌리기 불가"},
+                status=400
+            )
 
-        if prev_status not in allowed or allowed[prev_status] != target_status:
-            return Response({"status": "error", "code": 400,
-                            "message": f"{prev_status} → {target_status} 되돌리기 불가"}, status=400)
-
+        # --- 상태 업데이트 ---
         obj.status = target_status
         obj.save(update_fields=["status"])
 
@@ -477,7 +497,9 @@ class OrderRevertStatusView(APIView):
         if obj.ordersetmenu_id:
             setmenu = obj.ordersetmenu
             statuses = OrderMenu.objects.filter(
-                ordersetmenu=setmenu).values_list("status", flat=True)
+                ordersetmenu=setmenu
+            ).values_list("status", flat=True)
+
             if all(s == "cooked" for s in statuses):
                 setmenu.status = "cooked"
             elif all(s == "served" for s in statuses):
@@ -486,7 +508,7 @@ class OrderRevertStatusView(APIView):
                 setmenu.status = "pending"
             setmenu.save(update_fields=["status"])
 
-        ### 수정: 단건 broadcast
+        # 단건 broadcast
         broadcast_order_item_update(obj)
 
         return Response({
