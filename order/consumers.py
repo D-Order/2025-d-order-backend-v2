@@ -293,7 +293,7 @@ class RevenueConsumer(AsyncWebsocketConsumer):
         try:
             manager, booth = await get_manager_and_booth(user)
             if not manager or not booth:
-                logger.warning(f"RevenueConsumer: No manager/booth for user {user.id}")
+                logger.warning(f"RevenueConsumer: No manager/booth for user {getattr(user, 'id', None)}")
                 return await self.close(code=4003)
 
             self.booth = booth
@@ -304,8 +304,8 @@ class RevenueConsumer(AsyncWebsocketConsumer):
             # 최초 접속 시 snapshot 전송
             await self.send(text_data=json.dumps({
                 "type": "REVENUE_SNAPSHOT",
-                "boothId": booth.id,
-                "totalRevenue": booth.total_revenues or 0,
+                "boothId": int(booth.id),
+                "totalRevenue": int(booth.total_revenues or 0),  # Decimal → int 변환
             }))
 
             logger.info(f"RevenueConsumer: Connected for booth {booth.id}")
@@ -320,6 +320,6 @@ class RevenueConsumer(AsyncWebsocketConsumer):
     async def revenue_update(self, event):
         await self.send_json({
             "type": "REVENUE_UPDATE",
-            "boothId": event["boothId"],
-            "totalRevenue": event["totalRevenue"],
+            "boothId": int(event["boothId"]),
+            "totalRevenue": int(event["totalRevenue"] or 0),  # Decimal → int 변환
         })

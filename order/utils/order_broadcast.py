@@ -86,7 +86,7 @@ def broadcast_order_update(order: Order):
         }
     )
     
-def broadcast_total_revenue(booth_id: int, total_revenue: int):
+def broadcast_total_revenue(booth_id: int, total_revenue):
     """
     총매출만 따로 브로드캐스트
     """
@@ -95,7 +95,7 @@ def broadcast_total_revenue(booth_id: int, total_revenue: int):
         f"booth_{booth_id}_revenue",
         {
             "type": "revenue_update",
-            "boothId": booth_id,
-            "totalRevenue": total_revenue,
+            "boothId": int(booth_id),
+            "totalRevenue": int(total_revenue or 0),  # Decimal → int 변환
         }
     )
