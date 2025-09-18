@@ -10,7 +10,6 @@ from datetime import timedelta
 from rest_framework.status import (
     HTTP_200_OK, HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND
 )
-from order.utils.order_broadcast import broadcast_order_update
 
 from order.models import *
 from cart.models import *
@@ -19,7 +18,11 @@ from menu.models import *
 from booth.models import *
 from manager.models import *
 from order.serializers import *
-from order.utils.order_broadcast import broadcast_order_update
+from order.utils.order_broadcast import (
+    broadcast_order_update,
+    broadcast_order_item_update,
+    broadcast_order_set_update,
+)
 
 SEAT_MENU_CATEGORY = "seat"
 SEAT_FEE_CATEGORY = "seat_fee"
@@ -350,8 +353,11 @@ class KitchenOrderCookedView(APIView):
         data = OrderMenuSerializer(obj).data if isinstance(obj, OrderMenu) else OrderSetMenuSerializer(obj).data
         data["table_num"] = obj.order.table.table_num
 
-        # 조리 상태 변경 → 모든 페이지 동기화 필요
-        broadcast_order_update(obj.order)
+        ### 수정: 단건 broadcast
+        if isinstance(obj, OrderMenu):
+            broadcast_order_item_update(obj)
+        else:
+            broadcast_order_set_update(obj)
 
         return Response({"status": "success", "code": 200, "data": data}, status=200)
 
@@ -417,11 +423,13 @@ class ServingOrderCompleteView(APIView):
         # 직렬화 (중복 제거)
         data = OrderMenuSerializer(obj).data if isinstance(obj, OrderMenu) else OrderSetMenuSerializer(obj).data
 
-        # 상태 변경 → 모든 페이지 동기화 필요
-        broadcast_order_update(obj.order)
+        ### 수정: 단건 broadcast
+        if isinstance(obj, OrderMenu):
+            broadcast_order_item_update(obj)
+        else:
+            broadcast_order_set_update(obj)
 
         return Response({"status": "success", "code": 200, "data": data}, status=200)
-
 
 
 class OrderRevertStatusView(APIView):
@@ -470,16 +478,15 @@ class OrderRevertStatusView(APIView):
                 setmenu.status = "pending"
             setmenu.save(update_fields=["status"])
 
-        # 되돌리기 → 전체 broadcast
-        broadcast_order_update(obj.order)
+        ### 수정: 단건 broadcast
+        broadcast_order_item_update(obj)
 
-        ### 수정: 되돌리기 시 재고 변경 없음 (정책 그대로 유지)
         return Response({
             "status": "success",
             "code": 200,
             "message": f"{prev_status} → {target_status} 변경됨",
             "data": {
-                "order_item_id": obj.id,   ### 수정: 필드명 통일
+                "order_item_id": obj.id,
                 "prev_status": prev_status,
                 "new_status": target_status,
                 "table_num": obj.order.table.table_num
