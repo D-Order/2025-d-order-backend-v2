@@ -237,7 +237,8 @@ class OrderPasswordVerifyView(APIView):
                         menu=menu,
                         quantity=cm.quantity,
                         fixed_price=menu.menu_price,
-                        status="pending"
+                        # ✅ 음료면 무조건 cooked로 시작
+                        status="cooked" if menu.menu_category == "음료" else "pending"
                     )
                     if menu.menu_category == SEAT_FEE_CATEGORY:
                         table_fee += menu.menu_price * cm.quantity
@@ -274,7 +275,9 @@ class OrderPasswordVerifyView(APIView):
                             menu=smi.menu,
                             quantity=smi.quantity * cs.quantity,
                             fixed_price=smi.menu.menu_price,
-                            ordersetmenu=osm
+                            ordersetmenu=osm,
+                            # ✅ 세트 구성 음료도 무조건 cooked
+                            status="cooked" if smi.menu.menu_category == "음료" else "pending"
                         )
                     subtotal += setmenu.set_price * cs.quantity
 
