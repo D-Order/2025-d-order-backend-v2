@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 from channels.generic.websocket import AsyncWebsocketConsumer
 from asgiref.sync import sync_to_async
 from django.utils import timezone
@@ -54,13 +55,14 @@ def get_table_statuses(user):
         for table in tables:
             remaining_minutes, is_expired = None, False
 
-            if table.activated_at:
+            if table.activated_at and manager.table_limit_hours:
                 elapsed = timezone.now() - table.activated_at
-                limit_hours = manager.table_limit_hours or 0
-                limit = timedelta(hours=limit_hours)
-                remaining_minutes = max(0, int((limit - elapsed).total_seconds() // 60))
-                if elapsed > limit:
-                    is_expired = True
+                limit = timedelta(hours=manager.table_limit_hours)
+
+                total_seconds = (limit - elapsed).total_seconds()
+                remaining_minutes = max(0, math.ceil(total_seconds / 60))
+
+                is_expired = elapsed >= limit
 
             result.append({
                 "tableNumber": table.table_num,

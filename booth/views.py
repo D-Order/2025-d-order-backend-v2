@@ -1,3 +1,4 @@
+import math
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from booth.models import Booth, Table
@@ -164,15 +165,16 @@ class TableEnterAPIView(APIView):
         table.activated_at = timezone.now()
         table.save(update_fields=["status", "activated_at"])
 
-        # 5. 남은 시간 / 만료 여부 계산
+        # 5. 남은 시간 / 만료 여부 계산 (get_table_statuses와 동일 로직)
         remaining_minutes, is_expired = None, False
-        if table.activated_at:
+        if table.activated_at and manager.table_limit_hours:
             elapsed = timezone.now() - table.activated_at
-            limit_hours = manager.table_limit_hours or 0
-            limit = timedelta(hours=limit_hours)
-            remaining_minutes = max(0, int((limit - elapsed).total_seconds() // 60))
-            if elapsed > limit:
-                is_expired = True
+            limit = timedelta(hours=manager.table_limit_hours)
+
+            total_seconds = (limit - elapsed).total_seconds()
+            remaining_minutes = max(0, math.ceil(total_seconds / 60))
+
+            is_expired = elapsed >= limit
 
         # 6. 웹소켓 그룹으로 상태 갱신 이벤트 push
         try:
