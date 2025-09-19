@@ -17,5 +17,5 @@ class StatisticView(APIView):
         except Manager.DoesNotExist:
             return Response({"status": "fail", "message": "부스 없음"}, status=404)
 
-        stats = get_statistics(manager.booth.id)
+        stats = get_statistics(manager.booth.id, request=request)
         return Response({"status": "success", "data": stats}, status=200)
