@@ -15,10 +15,10 @@ def expand_order(order: Order):
     for om in order_menus:
         if om.menu.menu_category not in VISIBLE_MENU_CATEGORIES:
             continue
-        if om.status == "served" and om.updated_at <= now() - timedelta(seconds=60):
-            continue
+        # if om.status == "served" and om.updated_at <= now() - timedelta(seconds=60):
+        #     continue
 
-        # ✅ 보정 삭제: DB status 그대로 사용
+        # 보정 삭제: DB status 그대로 사용
         status = om.status
 
         expanded.append({
@@ -45,10 +45,10 @@ def expand_order(order: Order):
         for om in order_menus:
             if om.menu.menu_category not in VISIBLE_MENU_CATEGORIES:
                 continue
-            if om.status == "served" and om.updated_at <= now() - timedelta(seconds=60):
-                continue
+            # if om.status == "served" and om.updated_at <= now() - timedelta(seconds=60):
+            #     continue
 
-            # ✅ 보정 삭제
+            # 보정 삭제
             status = om.status
 
             expanded.append({
@@ -74,7 +74,7 @@ def broadcast_order_item_update(ordermenu: OrderMenu):
     booth = ordermenu.order.table.booth
     channel_layer = get_channel_layer()
     
-    # ✅ 보정 삭제
+    # 보정 삭제
     status = ordermenu.status
 
     data = {
@@ -137,7 +137,7 @@ def broadcast_order_set_update(orderset: OrderSetMenu):
         if om.menu.menu_category not in VISIBLE_MENU_CATEGORIES:
             continue
 
-        # ✅ 보정 삭제
+        # 보정 삭제
         status = om.status
 
         item_data = {
@@ -190,5 +190,21 @@ def broadcast_total_revenue(booth_id: int, total_revenue):
             "type": "revenue_update",
             "boothId": int(booth_id),
             "totalRevenue": int(total_revenue or 0),
+        }
+    )
+
+# 새로 추가: 빌지 전체 완료 시 broadcast
+def broadcast_order_completed(order: Order):
+    booth = order.table.booth
+    channel_layer = get_channel_layer()
+
+    async_to_sync(channel_layer.group_send)(
+        f"booth_{booth.id}_orders",
+        {
+            "type": "order_completed",
+            "data": {
+                "order_id": order.id,
+                "table_num": order.table.table_num,
+            }
         }
     )

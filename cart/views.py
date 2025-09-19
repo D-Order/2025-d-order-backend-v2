@@ -422,6 +422,7 @@ class PaymentInfoView(APIView):
     def get(self, request):
         booth_id = request.headers.get("Booth-ID")
         table_num = request.query_params.get("table_num")
+        
 
         if not booth_id or not table_num:
             return Response({

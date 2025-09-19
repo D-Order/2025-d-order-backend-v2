@@ -61,6 +61,7 @@ class OrderPasswordVerifyView(APIView):
     def get(self, request):
         booth_id = request.headers.get("Booth-ID")
         table_num = request.query_params.get("table_num")
+        coupon_code_input = request.query_params.get("coupon_code")
 
         if not booth_id or not table_num:
             return Response({
@@ -114,7 +115,7 @@ class OrderPasswordVerifyView(APIView):
                 seat_count = ordered_seat_count + cart_seat_count
 
         # 장바구니 금액 계산
-        cart_amount = 0
+        cart_amount, coupon_info, coupon_discount = 0, None, 0
         cart = Cart.objects.filter(table=table, is_ordered=False).order_by("-created_at").first()
         if cart:
             cart_menu_amount = CartMenu.objects.filter(cart=cart).aggregate(
@@ -127,24 +128,42 @@ class OrderPasswordVerifyView(APIView):
 
             pre_discount_total = cart_menu_amount + cart_set_amount
             cart_amount = pre_discount_total
+            
+             # ✅ 쿠폰 처리 로직
+            if coupon_code_input:
+                # 👉 기존 예약된 쿠폰 전부 해제
+                CouponCode.objects.filter(
+                    issued_to_table=table,
+                    used_at__isnull=True
+                ).update(issued_to_table=None)
 
-            # ✅ 쿠폰은 issued_to_table 기준으로만 반영 (applied_coupon은 무시)
-            coupon_code = CouponCode.objects.filter(
-                issued_to_table=table,
-                used_at__isnull=True
-            ).select_related("coupon").first()
+                # 👉 새로 전달받은 쿠폰 코드 조회
+                coupon_code = CouponCode.objects.filter(
+                    code=coupon_code_input.upper(),
+                    coupon__booth=booth,
+                    used_at__isnull=True
+                ).select_related("coupon").first()
 
-            if coupon_code:
-                cpn = coupon_code.coupon
-                if cpn.discount_type.lower() == "percent":
-                    coupon_discount = min(int(pre_discount_total * cpn.discount_value / 100), pre_discount_total)
-                else:
-                    coupon_discount = min(int(cpn.discount_value), pre_discount_total)
+                if coupon_code:
+                    cpn = coupon_code.coupon
+                    if cpn.discount_type.lower() == "percent":
+                        coupon_discount = min(int(pre_discount_total * cpn.discount_value / 100), pre_discount_total)
+                    else:
+                        coupon_discount = min(int(cpn.discount_value), pre_discount_total)
 
-                cart_amount = max(pre_discount_total - coupon_discount, 0)
+                    cart_amount = max(pre_discount_total - coupon_discount, 0)
+                    coupon_info = {
+                        "coupon_name": cpn.coupon_name,
+                        "discount_type": cpn.discount_type.lower(),
+                        "discount_value": cpn.discount_value,
+                        "code": coupon_code.code,
+                    }
+            
 
         data = {
-            "order_amount": cart_amount
+            "order_amount": cart_amount,
+            "coupon_discount": coupon_discount,
+            "coupon": coupon_info  # 없으면 null
         }
         if seat_count is not None:
             data["seat_count"] = seat_count
@@ -160,6 +179,7 @@ class OrderPasswordVerifyView(APIView):
         password = request.data.get('password')
         table_id = request.data.get('table_id')
         table_num = request.data.get('table_num')
+        coupon_code_input = request.data.get("coupon_code")
         now_dt = timezone.now()
 
         if not booth_id or not str(booth_id).isdigit():
@@ -237,8 +257,7 @@ class OrderPasswordVerifyView(APIView):
                         menu=menu,
                         quantity=cm.quantity,
                         fixed_price=menu.menu_price,
-                        # ✅ 음료면 무조건 cooked로 시작
-                        status="cooked" if menu.menu_category == "음료" else "pending"
+                        status="pending"
                     )
                     if menu.menu_category == SEAT_FEE_CATEGORY:
                         table_fee += menu.menu_price * cm.quantity
@@ -275,36 +294,47 @@ class OrderPasswordVerifyView(APIView):
                             menu=smi.menu,
                             quantity=smi.quantity * cs.quantity,
                             fixed_price=smi.menu.menu_price,
-                            ordersetmenu=osm,
-                            # ✅ 세트 구성 음료도 무조건 cooked
-                            status="cooked" if smi.menu.menu_category == "음료" else "pending"
+                            ordersetmenu=osm
                         )
                     subtotal += setmenu.set_price * cs.quantity
 
-                # 쿠폰 확정 처리
+                # ✅ 쿠폰 확정 처리
                 coupon_discount, applied_coupon_code = 0, None
-                if cart.applied_coupon:
-                    cpn = cart.applied_coupon
-                    coupon_code = CouponCode.objects.filter(
-                        coupon=cpn,
+                if coupon_code_input:
+                    # 👉 기존 예약 쿠폰 해제
+                    CouponCode.objects.filter(
                         issued_to_table=table,
                         used_at__isnull=True
-                    ).first()
+                    ).update(issued_to_table=None)
 
-                    pre_discount_total = subtotal + table_fee
-                    if cpn.discount_type.lower() == "percent":
-                        coupon_discount = min(int(pre_discount_total * cpn.discount_value / 100), pre_discount_total)
-                    else:
-                        coupon_discount = min(int(cpn.discount_value), pre_discount_total)
+                    coupon_code = CouponCode.objects.filter(
+                        code=coupon_code_input.upper(),
+                        coupon__booth=booth,
+                        used_at__isnull=True
+                    ).select_related("coupon").first()
 
                     if coupon_code:
+                        cpn = coupon_code.coupon
+                        pre_discount_total = subtotal + table_fee
+
+                        if cpn.discount_type.lower() == "percent":
+                            coupon_discount = min(int(pre_discount_total * cpn.discount_value / 100), pre_discount_total)
+                        else:
+                            coupon_discount = min(int(cpn.discount_value), pre_discount_total)
+
+                        # 👉 쿠폰 확정 (used_at 업데이트)
                         coupon_code.used_at = now_dt
                         coupon_code.issued_to_table = None
                         coupon_code.save(update_fields=['used_at', 'issued_to_table'])
-                    cpn.quantity = (cpn.quantity or 0) - 1
-                    cpn.save(update_fields=['quantity'])
-                    TableCoupon.objects.filter(table=table, coupon=cpn, used_at__isnull=True).update(used_at=now_dt)
-                    applied_coupon_code = coupon_code.code if coupon_code else None
+
+                        # 👉 수량 차감
+                        cpn.quantity = (cpn.quantity or 0) - 1
+                        cpn.save(update_fields=['quantity'])
+
+                        # 👉 TableCoupon 기록 업데이트
+                        TableCoupon.objects.filter(table=table, coupon=cpn, used_at__isnull=True).update(used_at=now_dt)
+
+                        applied_coupon_code = coupon_code.code
 
                 total_price = subtotal + table_fee - coupon_discount
                 if total_price < 0:
@@ -357,16 +387,6 @@ class OrderPasswordVerifyView(APIView):
                 status=500
             )
 
-        except ValueError as e:
-            return Response({"status": "error", "code": 400, "message": str(e)}, status=400)
-        except Exception as e:
-            import traceback
-            print("🚨 OrderPasswordVerifyView Exception:", e)
-            traceback.print_exc()
-            return Response(
-                {"status": "error", "code": 500, "message": str(e)},
-                status=500
-            )
 
 class TableOrderListView(APIView):
     def get(self, request, table_num):

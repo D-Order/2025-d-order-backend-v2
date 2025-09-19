@@ -150,6 +150,13 @@ class OrderConsumer(AsyncWebsocketConsumer):
             "type": "ORDER_UPDATE",
             "data": event["data"]
         }))
+        
+    # 새로 추가: 빌지 단위 완료 이벤트
+    async def order_completed(self, event):
+        await self.send(text_data=json.dumps({
+            "type": "ORDER_COMPLETED",
+            "data": event["data"]   # { order_id, table_num }
+        }))
 
 
 
