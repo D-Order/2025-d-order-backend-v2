@@ -192,3 +192,19 @@ def broadcast_total_revenue(booth_id: int, total_revenue):
             "totalRevenue": int(total_revenue or 0),
         }
     )
+
+# 새로 추가: 빌지 전체 완료 시 broadcast
+def broadcast_order_completed(order: Order):
+    booth = order.table.booth
+    channel_layer = get_channel_layer()
+
+    async_to_sync(channel_layer.group_send)(
+        f"booth_{booth.id}_orders",
+        {
+            "type": "order_completed",
+            "data": {
+                "order_id": order.id,
+                "table_num": order.table.table_num,
+            }
+        }
+    )

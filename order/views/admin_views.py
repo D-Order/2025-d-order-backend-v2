@@ -392,7 +392,7 @@ class ServingOrderCompleteView(APIView):
         if item_type == "menu":
             obj = get_object_or_404(OrderMenu, pk=item_id)
 
-            # ✅ 음료면 pending, cooked 둘 다 허용
+            # 음료면 pending, cooked 둘 다 허용
             if obj.menu.menu_category == "음료":
                 allowed = ["pending", "cooked"]
             else:
@@ -442,6 +442,15 @@ class ServingOrderCompleteView(APIView):
         else:
             broadcast_order_set_update(obj)
 
+        # 빌지 단위 검사 후 전체 완료 시 broadcast
+        order = obj.order
+        all_menus = OrderMenu.objects.filter(order=order)
+        all_sets = OrderSetMenu.objects.filter(order=order)
+        if all([m.status == "served" for m in all_menus]) and all([s.status == "served" for s in all_sets]):
+            from order.utils.order_broadcast import broadcast_order_completed
+            broadcast_order_completed(order)
+
+        # 마지막에 Response 반환
         return Response({"status": "success", "code": 200, "data": data}, status=200)
 
 
