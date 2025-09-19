@@ -56,8 +56,8 @@ class OrderMenu(models.Model):
         return self.fixed_price * self.quantity
     
     def save(self, *args, **kwargs):
-        # 음료면 무조건 status="cooked"
-        if self.menu and self.menu.menu_category == "음료":
+        # 새로 생성(add)될 때만 강제로 cooked로 시작
+        if self._state.adding and self.menu and self.menu.menu_category == "음료":
             self.status = "cooked"
         super().save(*args, **kwargs)
 
