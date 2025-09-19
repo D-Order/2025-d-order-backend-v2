@@ -417,11 +417,13 @@ class CartMenuUpdateView(APIView):
             return Response({"status": "fail", "message": "type은 menu 또는 set_menu이어야 합니다."}, status=400)
 
 
+
 class PaymentInfoView(APIView):
 
     def get(self, request):
         booth_id = request.headers.get("Booth-ID")
         table_num = request.query_params.get("table_num")
+        coupon_code_input = request.query_params.get("coupon_code")
 
         if not booth_id or not table_num:
             return Response({
@@ -493,6 +495,37 @@ class PaymentInfoView(APIView):
             subtotal += cs.set_menu.set_price * cs.quantity
 
         total_price = subtotal + table_fee
+        
+        total_price_before = subtotal + table_fee
+        total_price_after = total_price_before
+        discount_amount = 0
+        coupon_info = None
+
+        # ✅ 쿠폰 적용 (선택적)
+        if coupon_code_input:
+            coupon_code = CouponCode.objects.filter(
+                code=coupon_code_input.upper(),
+                coupon__booth_id=booth_id,
+                used_at__isnull=True
+            ).select_related("coupon").first()
+
+            if coupon_code:
+                discount_type = coupon_code.coupon.discount_type.lower()
+                discount_value = coupon_code.coupon.discount_value
+
+                if discount_type == "percent":
+                    discount_amount = int(total_price_before * (discount_value / 100))
+                else:
+                    discount_amount = int(discount_value)
+
+                total_price_after = max(total_price_before - discount_amount, 0)
+
+                coupon_info = {
+                    "coupon_name": coupon_code.coupon.coupon_name,
+                    "discount_type": discount_type,
+                    "discount_value": discount_value
+                }
+        
         manager = get_object_or_404(Manager, booth_id=booth_id)
 
         return Response({
@@ -501,7 +534,10 @@ class PaymentInfoView(APIView):
             "data": {
                 "subtotal": subtotal,         # 메뉴 + 세트메뉴
                 "table_fee": table_fee,       # seat_fee만 따로 합산
-                "total_price": total_price,   # 최종 결제 금액
+                "total_price_before": total_price_before,
+                "discount_amount": discount_amount,
+                "total_price_after": total_price_after,
+                "coupon": coupon_info,  # 없으면 null
                 "bank_name": manager.bank,
                 "account_number": manager.account,
                 "account_holder": manager.depositor,
@@ -721,6 +757,7 @@ class CouponValidateView(APIView):
             "code": 200,
             "data": {
                 "coupon_name": coupon_code.coupon.coupon_name,
+                "coupon_code": coupon_code.code,
                 "discount_type": coupon_code.coupon.discount_type.lower(),
                 "discount_value": coupon_code.coupon.discount_value
             }
