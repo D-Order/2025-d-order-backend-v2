@@ -60,18 +60,19 @@ class OrderPasswordVerifyView(APIView):
 
     def get(self, request):
         booth_id = request.headers.get("Booth-ID")
-        table_num = request.query_params.get("table_num")
+        cart_id = request.query_params.get("cart_id")  # cart_id로 받음
         coupon_code_input = request.query_params.get("coupon_code")
 
-        if not booth_id or not table_num:
+        if not booth_id or not cart_id:
             return Response({
                 "status": "fail",
                 "code": 400,
-                "message": "Booth-ID 헤더와 table_num 파라미터가 필요합니다."
+                "message": "Booth-ID 헤더와 cart_id 파라미터가 필요합니다."
             })
 
         booth = get_object_or_404(Booth, pk=booth_id)
-        table = get_object_or_404(Table, booth=booth, table_num=table_num)
+        cart = get_object_or_404(Cart, id=cart_id, table__booth=booth, is_ordered=False)
+        table = cart.table
         manager = get_object_or_404(Manager, booth=booth)
         activated_at = table.activated_at
 
@@ -104,61 +105,54 @@ class OrderPasswordVerifyView(APIView):
                 ).aggregate(total=models.Sum("quantity"))["total"] or 0
 
                 # 장바구니 seat_fee
-                cart = Cart.objects.filter(table=table, is_ordered=False).order_by("-created_at").first()
-                cart_seat_count = 0
-                if cart:
-                    cart_seat_count = CartMenu.objects.filter(
-                        cart=cart,
-                        menu=seat_fee_menu
-                    ).aggregate(total=models.Sum("quantity"))["total"] or 0
+                cart_seat_count = CartMenu.objects.filter(
+                    cart=cart,
+                    menu=seat_fee_menu
+                ).aggregate(total=models.Sum("quantity"))["total"] or 0
 
                 seat_count = ordered_seat_count + cart_seat_count
 
         # 장바구니 금액 계산
         cart_amount, coupon_info, coupon_discount = 0, None, 0
-        cart = Cart.objects.filter(table=table, is_ordered=False).order_by("-created_at").first()
-        if cart:
-            cart_menu_amount = CartMenu.objects.filter(cart=cart).aggregate(
-                total=models.Sum(models.F("quantity") * models.F("menu__menu_price"))
-            )["total"] or 0
 
-            cart_set_amount = CartSetMenu.objects.filter(cart=cart).aggregate(
-                total=models.Sum(models.F("quantity") * models.F("set_menu__set_price"))
-            )["total"] or 0
+        cart_menu_amount = CartMenu.objects.filter(cart=cart).aggregate(
+            total=models.Sum(models.F("quantity") * models.F("menu__menu_price"))
+        )["total"] or 0
 
-            pre_discount_total = cart_menu_amount + cart_set_amount
-            cart_amount = pre_discount_total
-            
-             # ✅ 쿠폰 처리 로직
-            if coupon_code_input:
-                # 👉 기존 예약된 쿠폰 전부 해제
-                CouponCode.objects.filter(
-                    issued_to_table=table,
-                    used_at__isnull=True
-                ).update(issued_to_table=None)
+        cart_set_amount = CartSetMenu.objects.filter(cart=cart).aggregate(
+            total=models.Sum(models.F("quantity") * models.F("set_menu__set_price"))
+        )["total"] or 0
 
-                # 👉 새로 전달받은 쿠폰 코드 조회
-                coupon_code = CouponCode.objects.filter(
-                    code=coupon_code_input.upper(),
-                    coupon__booth=booth,
-                    used_at__isnull=True
-                ).select_related("coupon").first()
+        pre_discount_total = cart_menu_amount + cart_set_amount
+        cart_amount = pre_discount_total
 
-                if coupon_code:
-                    cpn = coupon_code.coupon
-                    if cpn.discount_type.lower() == "percent":
-                        coupon_discount = min(int(pre_discount_total * cpn.discount_value / 100), pre_discount_total)
-                    else:
-                        coupon_discount = min(int(cpn.discount_value), pre_discount_total)
+        # 쿠폰 처리 로직
+        if coupon_code_input:
+            CouponCode.objects.filter(
+                issued_to_table=table,
+                used_at__isnull=True
+            ).update(issued_to_table=None)
 
-                    cart_amount = max(pre_discount_total - coupon_discount, 0)
-                    coupon_info = {
-                        "coupon_name": cpn.coupon_name,
-                        "discount_type": cpn.discount_type.lower(),
-                        "discount_value": cpn.discount_value,
-                        "code": coupon_code.code,
-                    }
-            
+            coupon_code = CouponCode.objects.filter(
+                code=coupon_code_input.upper(),
+                coupon__booth=booth,
+                used_at__isnull=True
+            ).select_related("coupon").first()
+
+            if coupon_code:
+                cpn = coupon_code.coupon
+                if cpn.discount_type.lower() == "percent":
+                    coupon_discount = min(int(pre_discount_total * cpn.discount_value / 100), pre_discount_total)
+                else:
+                    coupon_discount = min(int(cpn.discount_value), pre_discount_total)
+
+                cart_amount = max(pre_discount_total - coupon_discount, 0)
+                coupon_info = {
+                    "coupon_name": cpn.coupon_name,
+                    "discount_type": cpn.discount_type.lower(),
+                    "discount_value": cpn.discount_value,
+                    "code": coupon_code.code,
+                }
 
         data = {
             "order_amount": cart_amount,
@@ -173,15 +167,16 @@ class OrderPasswordVerifyView(APIView):
             "code": 200,
             "data": data
         }, status=200)
+
         
     def post(self, request):
         booth_id = request.headers.get('Booth-ID')
         password = request.data.get('password')
-        table_id = request.data.get('table_id')
-        table_num = request.data.get('table_num')
+        cart_id = request.data.get('cart_id')   # ✅ cart_id 사용
         coupon_code_input = request.data.get("coupon_code")
         now_dt = timezone.now()
 
+        # --- Booth 검증 ---
         if not booth_id or not str(booth_id).isdigit():
             return Response({"status": "error", "code": 404, "message": "Booth-ID가 누락되었거나 잘못되었습니다."}, status=404)
         booth = Booth.objects.filter(pk=int(booth_id)).first()
@@ -192,41 +187,36 @@ class OrderPasswordVerifyView(APIView):
         if not manager:
             return Response({"status": "error", "code": 404, "message": "해당 부스의 운영자 정보가 없습니다."}, status=404)
 
+        # --- 비밀번호 검증 ---
         if not password or not str(password).isdigit() or len(str(password)) != 4:
             return Response({"status": "error", "code": 400, "message": "비밀번호는 4자리 숫자여야 합니다."}, status=400)
         if str(password) != str(manager.order_check_password):
             return Response({"status": "error", "code": 401, "message": "비밀번호가 일치하지 않습니다."}, status=401)
 
-        if table_id:
-            table = Table.objects.filter(pk=table_id, booth=booth).first()
-        elif table_num is not None:
-            table = Table.objects.filter(table_num=table_num, booth=booth).first()
-        else:
-            return Response({"status": "error", "code": 400, "message": "table_id 또는 table_num이 필요합니다."}, status=400)
+        # --- Cart 검증 ---
+        if not cart_id:
+            return Response({"status": "error", "code": 400, "message": "cart_id가 필요합니다."}, status=400)
 
-        if not table:
-            return Response({"status": "error", "code": 404, "message": "해당 테이블을 찾을 수 없습니다."}, status=404)
-
-        cart = Cart.objects.filter(table_id=table.id, is_ordered=False).first()
+        cart = Cart.objects.filter(id=cart_id, table__booth=booth, is_ordered=False).first()
         if not cart:
             return Response({"status": "error", "code": 404, "message": "주문 가능한 장바구니가 없습니다."}, status=404)
 
+        table = cart.table
         cart_menus = list(CartMenu.objects.filter(cart=cart))
         cart_sets = list(CartSetMenu.objects.filter(cart=cart))
         if not cart_menus and not cart_sets:
             return Response({"status": "error", "code": 400, "message": "장바구니가 비어 있습니다."}, status=400)
 
-        # 첫 주문이라면 seat_fee/person_fee 필수
+        # --- 첫 주문 seat_fee/person_fee 필수 ---
         if _is_first_session(table, now_dt):
-            if manager.seat_type == "PT":  # 🚩 테이블 단위 요금
+            if manager.seat_type == "PT":  # 테이블 단위 요금
                 seat_fee_menu = Menu.objects.filter(booth=booth, menu_category="seat_fee").first()
                 if seat_fee_menu and not any(cm.menu_id == seat_fee_menu.id for cm in cart_menus):
                     return Response(
                         {"status": "error", "code": 400, "message": "첫 주문에는 테이블 이용료를 포함해야 합니다."},
                         status=400
                     )
-
-        elif manager.seat_type == "PP":  # 🚩 인당 요금
+        elif manager.seat_type == "PP":  # 인당 요금
             person_fee_menu = Menu.objects.filter(booth=booth, menu_category="person_fee").first()
             if person_fee_menu and not any(cm.menu_id == person_fee_menu.id for cm in cart_menus):
                 return Response(
@@ -234,7 +224,7 @@ class OrderPasswordVerifyView(APIView):
                     status=400
                 )
 
-            
+        # --- 주문 생성 ---
         try:
             with transaction.atomic():
                 order = Order.objects.create(
@@ -244,7 +234,7 @@ class OrderPasswordVerifyView(APIView):
 
                 subtotal, table_fee = 0, 0
 
-                # 일반 메뉴 장바구니 처리
+                # 일반 메뉴 처리
                 for cm in cart_menus:
                     menu = get_object_or_404(Menu, pk=cm.menu_id)
                     if menu.menu_amount < cm.quantity:
@@ -264,7 +254,7 @@ class OrderPasswordVerifyView(APIView):
                     else:
                         subtotal += menu.menu_price * cm.quantity
 
-                # 세트메뉴 장바구니 처리
+                # 세트메뉴 처리
                 for cs in cart_sets:
                     setmenu = get_object_or_404(SetMenu, pk=cs.set_menu_id)
                     sm_items = SetMenuItem.objects.filter(set_menu_id=setmenu.pk)
@@ -298,10 +288,9 @@ class OrderPasswordVerifyView(APIView):
                         )
                     subtotal += setmenu.set_price * cs.quantity
 
-                # ✅ 쿠폰 확정 처리
+                # --- 쿠폰 확정 처리 ---
                 coupon_discount, applied_coupon_code = 0, None
                 if coupon_code_input:
-                    # 👉 기존 예약 쿠폰 해제
                     CouponCode.objects.filter(
                         issued_to_table=table,
                         used_at__isnull=True
@@ -322,16 +311,13 @@ class OrderPasswordVerifyView(APIView):
                         else:
                             coupon_discount = min(int(cpn.discount_value), pre_discount_total)
 
-                        # 👉 쿠폰 확정 (used_at 업데이트)
                         coupon_code.used_at = now_dt
                         coupon_code.issued_to_table = None
                         coupon_code.save(update_fields=['used_at', 'issued_to_table'])
 
-                        # 👉 수량 차감
                         cpn.quantity = (cpn.quantity or 0) - 1
                         cpn.save(update_fields=['quantity'])
 
-                        # 👉 TableCoupon 기록 업데이트
                         TableCoupon.objects.filter(table=table, coupon=cpn, used_at__isnull=True).update(used_at=now_dt)
 
                         applied_coupon_code = coupon_code.code
@@ -372,7 +358,9 @@ class OrderPasswordVerifyView(APIView):
                         "table_fee": table_fee,
                         "coupon_discount": coupon_discount,
                         "coupon": applied_coupon_code,
-                        "booth_total_revenues": booth.total_revenues
+                        "booth_total_revenues": booth.total_revenues,
+                        "table_num": table.table_num,   # 응답에 table_num 추가
+                        "cart_id": cart.id             # 응답에 cart_id 추가
                     }
                 }, status=201)
 
