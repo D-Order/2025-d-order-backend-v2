@@ -671,21 +671,23 @@ class CouponValidateView(APIView):
         
 class CartExistsView(APIView):
     """
-    특정 테이블의 장바구니에 아이템이 존재하는지 확인하는 API
-    GET /carts/exists/?table_num=<int>
+    특정 cart_id로 장바구니에 아이템이 존재하는지 확인하는 API
+    GET /api/v2/cart/exists/?cartId=<int>
     """
 
     def get(self, request):
         booth_id = request.headers.get("Booth-ID")
-        table_num = request.query_params.get("table_num")
+        cart_id = request.query_params.get("cartId")
 
-        if not booth_id or not table_num:
+        # --- 필수값 체크
+        if not booth_id or not cart_id:
             return Response({
                 "status": "fail",
                 "code": 400,
-                "message": "Booth-ID 헤더와 table_num 파라미터가 필요합니다."
+                "message": "Booth-ID 헤더와 cartId 파라미터가 필요합니다."
             }, status=HTTP_400_BAD_REQUEST)
 
+        # --- 부스 확인
         booth = Booth.objects.filter(pk=booth_id).first()
         if not booth:
             return Response({
@@ -694,36 +696,38 @@ class CartExistsView(APIView):
                 "message": "해당 부스를 찾을 수 없습니다."
             }, status=HTTP_404_NOT_FOUND)
 
-        table = Table.objects.filter(booth=booth, table_num=table_num).first()
-        if not table:
-            return Response({
-                "status": "fail",
-                "code": 404,
-                "message": "해당 테이블을 찾을 수 없습니다."
-            }, status=HTTP_404_NOT_FOUND)
-            
-        # ✅ 활성화 여부 체크
-        if table.status != "activate":
-            return Response({
-                "status": "fail",
-                "code": 400,
-                "message": "활성화되지 않은 테이블입니다."
-            }, status=HTTP_400_BAD_REQUEST)
-
-         # ✅ 활성화된 이후 구간만 고려
-        activated_at = getattr(table, "activated_at", None)
-        qs = Cart.objects.filter(table=table, is_ordered=False)
-        if activated_at:
-            qs = qs.filter(created_at__gte=activated_at)
-
-        cart = qs.order_by("-created_at").first()
-
-        has_items = False
-        if cart:
-            has_items = (
-                CartMenu.objects.filter(cart=cart).exists()
-                or CartSetMenu.objects.filter(cart=cart).exists()
+        # --- cart 조회
+        cart = (
+            Cart.objects.filter(
+                pk=cart_id,
+                table__booth=booth,
+                is_ordered=False
             )
+            .order_by("-created_at")
+            .first()
+        )
+
+        if not cart:
+            return Response({
+                "status": "success",
+                "code": 200,
+                "data": {"has_cart_items": False}
+            }, status=HTTP_200_OK)
+
+        # --- 활성화 이후 보정
+        activated_at = getattr(cart.table, "activated_at", None)
+        if activated_at and cart.created_at < activated_at:
+            return Response({
+                "status": "success",
+                "code": 200,
+                "data": {"has_cart_items": False}
+            }, status=HTTP_200_OK)
+
+        # --- 장바구니에 아이템 존재 여부
+        has_items = (
+            CartMenu.objects.filter(cart=cart).exists()
+            or CartSetMenu.objects.filter(cart=cart).exists()
+        )
 
         return Response({
             "status": "success",
