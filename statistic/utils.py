@@ -1,5 +1,6 @@
+import math
 from django.db.models import Sum, F, Avg, DurationField, ExpressionWrapper, Q, Count
-from django.db.models.functions import Coalesce
+from django.db.models.functions import Coalesce, Greatest
 from django.utils import timezone
 from order.models import Order, OrderMenu, OrderSetMenu
 from menu.models import Menu
@@ -73,6 +74,7 @@ def get_statistics(booth_id: int):
     top3 = (
         OrderMenu.objects.filter(order__table__booth=booth)
         .exclude(menu__menu_category__in=["seat", "seat_fee"])
+        .select_related("menu")   # ### FIX: select_related로 이미지 접근
         .values("menu__menu_name", "menu__menu_price", "menu__menu_image")
         .annotate(total_quantity=Sum("quantity"))
         .order_by("-total_quantity")[:3]
@@ -81,10 +83,9 @@ def get_statistics(booth_id: int):
         {
             "menu__menu_name": m["menu__menu_name"],
             "menu__menu_price": float(m["menu__menu_price"]),
-            # 문자열 → URL 변환
+            # ### FIX: url 속성 접근 보정
             "menu__menu_image": (
-                settings.MEDIA_URL + m["menu__menu_image"]
-                if m["menu__menu_image"] else None
+                m["menu__menu_image"].url if m["menu__menu_image"] else None
             ),
             "total_quantity": m["total_quantity"],
         }
@@ -104,24 +105,21 @@ def get_statistics(booth_id: int):
                 0,
             )
         )
-        .annotate(remaining=F("menu_amount") - F("reserved"))
+        # ### FIX: remaining 음수 방지
+        .annotate(remaining=Greatest(F("menu_amount") - F("reserved"), Value(0)))
         .filter(remaining__lte=5)
-        .values("menu_name", "menu_price", "menu_image", "remaining")
     )
+
     low_stock = [
         {
-            "menu_name": m["menu_name"],
-            "menu_price": float(m["menu_price"]),
-            # 문자열 → URL 변환
-            "menu_image": (
-                settings.MEDIA_URL + m["menu_image"]
-                if m["menu_image"] else None
-            ),
-            "remaining": m["remaining"],
+            "menu_name": m.menu_name,
+            "menu_price": float(m.menu_price),
+            # ### FIX: ImageField → url 접근
+            "menu_image": m.menu_image.url if m.menu_image else None,
+            "remaining": m.remaining,
         }
         for m in low_stock_qs
     ]
-
     # --- 평균 테이블 사용시간 (entered_at ~ 마지막 served 메뉴 시각)
     table_usages = []
     for table in Table.objects.filter(booth=booth, activated_at__isnull=False):
@@ -135,13 +133,16 @@ def get_statistics(booth_id: int):
             usage = (last_served - table.activated_at).total_seconds() // 60
             table_usages.append(usage)
 
-    avg_table_usage = sum(table_usages) / len(table_usages) if table_usages else 0
+    # 평균 테이블 사용시간: 소수점 버림 (정수 분)
+    avg_table_usage = int(sum(table_usages) / len(table_usages)) if table_usages else 0
 
-    # --- 회전율 (%): 영업시간 ÷ 평균 이용시간 × 100
+    # --- 회전율 (%): 영업시간 ÷ 평균 이용시간 × 테이블 수
     first_order = Order.objects.filter(table__booth=booth).order_by("created_at").first()
-    if first_order and avg_table_usage > 0:
+    table_count = Table.objects.filter(booth=booth, activated_at__isnull=False).count()
+    if first_order and avg_table_usage > 0 and table_count > 0:
         business_minutes = (now - first_order.created_at).total_seconds() // 60
-        turnover_rate = round((business_minutes / avg_table_usage) * 100, 2)
+        # 회전율: 소수점 첫째 자리까지만 표시
+        turnover_rate = math.floor((business_minutes / avg_table_usage) * table_count * 10) / 10
     else:
         turnover_rate = 0.0
 
