@@ -2,6 +2,7 @@ import math
 from django.db.models import Sum, F, Avg, DurationField, ExpressionWrapper, Q, Count
 from django.db.models.functions import Coalesce, Greatest
 from django.utils import timezone
+from django.db.models import Value
 from order.models import Order, OrderMenu, OrderSetMenu
 from menu.models import Menu
 from booth.models import Table
@@ -12,7 +13,7 @@ from datetime import timedelta
 from django.conf import settings
 
 
-def get_statistics(booth_id: int):
+def  get_statistics(booth_id: int, request=None):
     manager = Manager.objects.get(booth_id=booth_id)
     booth = manager.booth
     now = timezone.now()
@@ -59,7 +60,7 @@ def get_statistics(booth_id: int):
         .values_list("created_at", "updated_at")
     )
     if served_menus:
-        total_wait = sum([(s - c).total_seconds() for c, s in served_menus])
+        total_wait = sum([(u - c).total_seconds() for c, u in served_menus])
         avg_wait = int(total_wait / len(served_menus) // 60)
     else:
         avg_wait = 0
@@ -74,7 +75,6 @@ def get_statistics(booth_id: int):
     top3 = (
         OrderMenu.objects.filter(order__table__booth=booth)
         .exclude(menu__menu_category__in=["seat", "seat_fee"])
-        .select_related("menu")   # ### FIX: select_related로 이미지 접근
         .values("menu__menu_name", "menu__menu_price", "menu__menu_image")
         .annotate(total_quantity=Sum("quantity"))
         .order_by("-total_quantity")[:3]
@@ -83,9 +83,10 @@ def get_statistics(booth_id: int):
         {
             "menu__menu_name": m["menu__menu_name"],
             "menu__menu_price": float(m["menu__menu_price"]),
-            # ### FIX: url 속성 접근 보정
             "menu__menu_image": (
-                m["menu__menu_image"].url if m["menu__menu_image"] else None
+                request.build_absolute_uri(f"{settings.MEDIA_URL}{m['menu__menu_image']}")
+                if request and m.get("menu__menu_image") not in [None, ""]
+                else None
             ),
             "total_quantity": m["total_quantity"],
         }
@@ -105,17 +106,18 @@ def get_statistics(booth_id: int):
                 0,
             )
         )
-        # ### FIX: remaining 음수 방지
         .annotate(remaining=Greatest(F("menu_amount") - F("reserved"), Value(0)))
         .filter(remaining__lte=5)
     )
-
     low_stock = [
         {
             "menu_name": m.menu_name,
             "menu_price": float(m.menu_price),
-            # ### FIX: ImageField → url 접근
-            "menu_image": m.menu_image.url if m.menu_image else None,
+            "menu_image": (
+                request.build_absolute_uri(f"{settings.MEDIA_URL}{m.menu_image.name}")
+                if request and m.menu_image
+                else None
+            ),
             "remaining": m.remaining,
         }
         for m in low_stock_qs
