@@ -4,6 +4,7 @@ from cart.views import *
 urlpatterns = [
     path('detail/', CartDetailView.as_view(), name='cart-detail'),
     path('', CartAddView.as_view(), name='cart-add'),
+    path('exists/', CartExistsView.as_view(), name='cart-exists'),
     path('menu/', CartMenuUpdateView.as_view(), name='cart-menu-update'),
     path('payment-info/', PaymentInfoView.as_view(), name='payment-info'),
     path('apply-coupon/', ApplyCouponView.as_view(), name='apply-coupon'),
