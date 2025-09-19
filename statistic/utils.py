@@ -148,23 +148,23 @@ def  get_statistics(booth_id: int, request=None):
     else:
         turnover_rate = 0.0
 
-    # --- 메뉴별 평균 대기시간 (OrderMenu 단위)
-    menu_waits = (
-        OrderMenu.objects.filter(order__table__booth=booth, status="served")
-        .exclude(menu__menu_category__in=["seat", "seat_fee"])
-        .annotate(
-            wait_time=ExpressionWrapper(
-                F("updated_at") - F("created_at"),
-                output_field=DurationField(),
-            )
-        )
-        .values("menu__menu_name")
-        .annotate(avg_wait=Avg("wait_time"))
-    )
-    menu_wait_times = [
-        {"menu_name": m["menu__menu_name"], "avg_wait_minutes": int(m["avg_wait"].total_seconds() // 60)}
-        for m in menu_waits if m["avg_wait"] is not None
-    ]
+    # --- 메뉴별 평균 대기시간 (추후 필요시 사용) ---
+    # menu_waits = (
+    #     OrderMenu.objects.filter(order__table__booth=booth, status="served")
+    #     .exclude(menu__menu_category__in=["seat", "seat_fee"])
+    #     .annotate(
+    #         wait_time=ExpressionWrapper(
+    #             F("updated_at") - F("created_at"),
+    #             output_field=DurationField(),
+    #         )
+    #     )
+    #     .values("menu__menu_name")
+    #     .annotate(avg_wait=Avg("wait_time"))
+    # )
+    # menu_wait_times = [
+    #     {"menu_name": m["menu__menu_name"], "avg_wait_minutes": int(m["avg_wait"].total_seconds() // 60)}
+    #     for m in menu_waits if m["avg_wait"] is not None
+    # ]
 
     return {
         "total_orders": total_orders,
@@ -178,7 +178,7 @@ def  get_statistics(booth_id: int, request=None):
         "low_stock": low_stock,
         "avg_table_usage": avg_table_usage,
         "turnover_rate": turnover_rate,
-        "menu_wait_times": menu_wait_times,
+        # "menu_wait_times": menu_wait_times,  #  현재는 주석 처리
         "seat_type": manager.seat_type,
     }
 
