@@ -3,6 +3,7 @@ from django.db.models import Sum, F, Avg, DurationField, ExpressionWrapper, Q, C
 from django.db.models.functions import Coalesce, Greatest
 from django.utils import timezone
 from django.db.models import Value
+from booth.models import Table, TableUsage
 from order.models import Order, OrderMenu, OrderSetMenu
 from menu.models import Menu
 from booth.models import Table
@@ -78,30 +79,41 @@ def get_statistics(booth_id: int, request=None):
     # --- 평균 대기 시간 (OrderMenu 단위 created_at → served 시각)
     served_menus = (
         OrderMenu.objects.filter(order__table__booth=booth, status="served")
-        .exclude(menu__menu_category="seat_fee")  # seat_fee는 집계에서 제외
-        .values_list("created_at", "updated_at")
+        .exclude(menu__menu_category__in=["seat", "seat_fee"])  ### seat/seat_fee 제외 강화
+        .exclude(order__order_status="cancelled")               ### 주문 취소 제외
+        .values("menu__menu_category", "created_at", "cooked_at", "served_at")
     )
-    # None 값/0초 제외, 분단위로 소수점까지 반올림
-    wait_times = [
-        (u - c).total_seconds() for c, u in served_menus
-        if u and c and u > c
-    ]
-    if wait_times:
-        avg_wait = round(sum(wait_times) / len(wait_times) / 60, 1)
-    else:
-        avg_wait = 0
+
+    wait_times = []
+    for m in served_menus:
+        if m["menu__menu_category"] == "음료":
+            start = m["cooked_at"]   ### 음료는 cooked_at부터 측정
+        else:
+            start = m["created_at"]  ### 일반 메뉴는 created_at부터 측정
+        end = m["served_at"]
+        if start and end and end > start:
+            wait_times.append((end - start).total_seconds())
+
+    avg_wait = round(sum(wait_times) / len(wait_times) / 60, 1) if wait_times else 0
 
     # --- 서빙 완료/대기 중 (OrderMenu.status 기준)
-    # seat_fee 제외
     served_count = OrderMenu.objects.filter(
         order__table__booth=booth,
         status="served"
-    ).exclude(menu__menu_category="seat_fee").count()
+    ).exclude(
+        Q(menu__menu_category__in=["seat", "seat_fee"])  ### seat/seat_fee 확실히 제외
+    ).exclude(
+        order__order_status="cancelled"                  ### 주문 취소 제외
+    ).count()
 
     waiting_count = OrderMenu.objects.filter(
         order__table__booth=booth,
         status__in=["pending", "cooked"]
-    ).exclude(menu__menu_category="seat_fee").count()
+    ).exclude(
+        Q(menu__menu_category__in=["seat", "seat_fee"])  ### seat/seat_fee 확실히 제외
+    ).exclude(
+        order__order_status="cancelled"                  ### 주문 취소 제외
+    ).count()
 
     # --- TOP3 메뉴
     top3 = (
@@ -158,24 +170,20 @@ def get_statistics(booth_id: int, request=None):
         for m in low_stock_qs
     ]
 
-    # --- 평균 테이블 사용시간 (entered_at ~ 마지막 served 메뉴 시각)
-    table_usages = []
-    for table in Table.objects.filter(booth=booth, activated_at__isnull=False):
-        if table.activated_at:
-            if table.deactivated_at:  # 이미 초기화된 테이블
-                usage = (table.deactivated_at - table.activated_at).total_seconds() // 60
-            else:  # 아직 사용 중인 테이블
-                usage = (now - table.activated_at).total_seconds() // 60
-            table_usages.append(usage)
-
+    # --- 평균 테이블 사용시간 (TableUsage + 현재 진행 중)
+    table_usages = list(
+        TableUsage.objects.filter(booth=booth).values_list("usage_minutes", flat=True)
+    )
+    for table in Table.objects.filter(booth=booth, activated_at__isnull=False, deactivated_at__isnull=True):
+        usage = (now - table.activated_at).total_seconds() // 60
+        table_usages.append(int(usage))
     avg_table_usage = int(sum(table_usages) / len(table_usages)) if table_usages else 0
 
     # --- 회전율 (%): 영업시간 ÷ 평균 이용시간 × 테이블 수
     first_order = Order.objects.filter(table__booth=booth).order_by("created_at").first()
-    table_count = Table.objects.filter(booth=booth, activated_at__isnull=False).count()
+    table_count = Table.objects.filter(booth=booth).count()
     if first_order and avg_table_usage > 0 and table_count > 0:
         business_minutes = (now - first_order.created_at).total_seconds() // 60
-        # 회전율: 소수점 첫째 자리까지만 표시
         turnover_rate = math.floor((business_minutes / avg_table_usage) * table_count * 10) / 10
     else:
         turnover_rate = 0.0

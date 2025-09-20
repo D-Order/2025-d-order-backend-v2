@@ -678,10 +678,11 @@ class KitchenOrderCookedView(APIView):
         if item_type == "menu":
             obj = get_object_or_404(OrderMenu, pk=item_id)
 
-            # ✅ 음료 특수 처리: pending → cooked 자동 허용
+            #  음료 특수 처리: pending → cooked 자동 허용
             if obj.menu.menu_category == "음료" and obj.status == "pending":
                 obj.status = "cooked"
-                obj.save(update_fields=["status"])
+                obj.cooked_at = now()   #  조리완료 시간 기록
+                obj.save(update_fields=["status", "cooked_at"])
 
             elif obj.status != "pending":
                 return Response(
@@ -690,7 +691,8 @@ class KitchenOrderCookedView(APIView):
                 )
             else:
                 obj.status = "cooked"
-                obj.save(update_fields=["status"])
+                obj.cooked_at = now()   #  조리완료 시간 기록
+                obj.save(update_fields=["status", "cooked_at"])
 
             # 세트 동기화
             if obj.ordersetmenu_id:
@@ -714,7 +716,8 @@ class KitchenOrderCookedView(APIView):
                 )
 
             obj.status = "cooked"
-            obj.save(update_fields=["status"])
+            obj.cooked_at = now()   # ✅ 세트 cooked 시간 기록
+            obj.save(update_fields=["status", "cooked_at"])
 
         # 직렬화 (중복 제거)
         data = OrderMenuSerializer(obj).data if isinstance(obj, OrderMenu) else OrderSetMenuSerializer(obj).data
@@ -766,7 +769,8 @@ class ServingOrderCompleteView(APIView):
                 )
 
             obj.status = "served"
-            obj.save(update_fields=["status"])
+            obj.served_at = now()   # ✅ 서빙 완료 시간 기록
+            obj.save(update_fields=["status", "served_at"])
 
             # 세트 동기화
             if obj.ordersetmenu_id:
@@ -792,7 +796,8 @@ class ServingOrderCompleteView(APIView):
                 )
 
             obj.status = "served"
-            obj.save(update_fields=["status"])
+            obj.served_at = now()   # ✅ 세트 서빙 완료 시간 기록
+            obj.save(update_fields=["status", "served_at"])
 
         # 직렬화
         data = OrderMenuSerializer(obj).data if isinstance(obj, OrderMenu) else OrderSetMenuSerializer(obj).data
@@ -838,7 +843,8 @@ class OrderRevertStatusView(APIView):
     """
     PATCH /api/v2/orders/revert-status/
     {
-        "id": <ordermenu_id>,
+        "id": <ordermenu_id or ordersetmenu_id>,
+        "type": "menu" | "setmenu",
         "target_status": "pending" | "cooked"
     }
     """
@@ -846,27 +852,32 @@ class OrderRevertStatusView(APIView):
 
     def patch(self, request):
         item_id = request.data.get("id")
+        item_type = request.data.get("type")   # ✅ 구분 추가
         target_status = request.data.get("target_status")
 
-        if not item_id or target_status not in ["pending", "cooked"]:
+        if not item_id or item_type not in ["menu", "setmenu"] or target_status not in ["pending", "cooked"]:
             return Response(
                 {"status": "error", "code": 400,
-                "message": "id, target_status(pending|cooked) 필수"},
+                "message": "id, type(menu|setmenu), target_status(pending|cooked) 필수"},
                 status=400
             )
 
-        obj = OrderMenu.objects.filter(pk=item_id).first()
+        if item_type == "menu":
+            obj = OrderMenu.objects.filter(pk=item_id).select_related("menu", "order").first()
+        else:
+            obj = OrderSetMenu.objects.filter(pk=item_id).select_related("set_menu", "order").first()
+
         if not obj:
             return Response(
                 {"status": "error", "code": 404,
-                "message": f"OrderMenu {item_id} 찾을 수 없음"},
+                "message": f"{item_type} {item_id} 찾을 수 없음"},
                 status=404
             )
 
         prev_status = obj.status
 
         # --- 허용 전이 규칙 정의 ---
-        if obj.menu.menu_category == "음료":
+        if item_type == "menu" and obj.menu.menu_category == "음료":
             allowed = {
                 "cooked": ["pending"],
                 "served": ["cooked", "pending"],  # 음료는 served → cooked / pending 둘 다 허용
@@ -885,12 +896,26 @@ class OrderRevertStatusView(APIView):
                 status=400
             )
 
-        # --- 상태 업데이트 ---
-        obj.status = target_status
-        obj.save(update_fields=["status"])
+        # --- 상태 업데이트 (✅ OrderMenu + OrderSetMenu 공통 처리) ---
+        from django.utils.timezone import now
 
-        # 세트 동기화
-        if obj.ordersetmenu_id:
+        obj.status = target_status
+
+        if target_status == "pending":
+            obj.cooked_at = None
+            obj.served_at = None
+            obj.save(update_fields=["status", "cooked_at", "served_at"])
+
+        elif target_status == "cooked":
+            obj.cooked_at = now()
+            obj.served_at = None
+            obj.save(update_fields=["status", "cooked_at", "served_at"])
+
+        else:
+            obj.save(update_fields=["status"])
+
+        # --- 세트 동기화 (OrderMenu일 때만) ---
+        if item_type == "menu" and obj.ordersetmenu_id:
             setmenu = obj.ordersetmenu
             statuses = OrderMenu.objects.filter(
                 ordersetmenu=setmenu
@@ -898,20 +923,29 @@ class OrderRevertStatusView(APIView):
 
             if all(s == "cooked" for s in statuses):
                 setmenu.status = "cooked"
+                setmenu.cooked_at = now()
+                setmenu.served_at = None
             elif all(s == "served" for s in statuses):
                 setmenu.status = "served"
+                setmenu.served_at = now()
             else:
                 setmenu.status = "pending"
-            setmenu.save(update_fields=["status"])
+                setmenu.cooked_at = None
+                setmenu.served_at = None
+            setmenu.save(update_fields=["status", "cooked_at", "served_at"])
 
-        # 단건 broadcast
-        broadcast_order_item_update(obj)
+        # --- 단건 broadcast ---
+        if item_type == "menu":
+            broadcast_order_item_update(obj)
+        else:
+            broadcast_order_set_update(obj)
 
         return Response({
             "status": "success",
             "code": 200,
             "message": f"{prev_status} → {target_status} 변경됨",
             "data": {
+                "type": item_type,
                 "order_item_id": obj.id,
                 "prev_status": prev_status,
                 "new_status": target_status,
