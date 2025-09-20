@@ -33,15 +33,16 @@ def _is_first_session(table: Table, now_dt=None) -> bool:
 
     qs = Order.objects.filter(table_id=table.id)
 
-    # ✅ 리셋 이후 주문만 확인
-    if deactivated_at:
-        qs = qs.filter(created_at__gte=deactivated_at)
+    # 기준 시각 = activated_at, deactivated_at 중 더 나중 시간
+    baseline = None
+    if activated_at and deactivated_at:
+        baseline = max(activated_at, deactivated_at)
+    else:
+        baseline = activated_at or deactivated_at
 
-    # ✅ 입장 이후 주문만 확인 (안전망)
-    if activated_at:
-        qs = qs.filter(created_at__gte=activated_at)
+    if baseline:
+        qs = qs.filter(created_at__gte=baseline)
 
-    # 주문이 하나도 없으면 첫 주문
     return not qs.exists()
 
 
@@ -220,20 +221,22 @@ class OrderPasswordVerifyView(APIView):
         if not cart_menus and not cart_sets:
             return Response({"status": "error", "code": 400, "message": "장바구니가 비어 있습니다."}, status=400)
 
-        # --- 첫 주문 seat_fee/person_fee 필수 ---
-        if _is_first_session(table, now_dt):
-            if manager.seat_type == "PT":  # 테이블 단위 요금
-                seat_fee_menu = Menu.objects.filter(booth=booth, menu_category="seat_fee").first()
-                if seat_fee_menu and not any(cm.menu_id == seat_fee_menu.id for cm in cart_menus):
-                    return Response(
-                        {"status": "error", "code": 400, "message": "첫 주문에는 테이블 이용료를 포함해야 합니다."},
-                        status=400
-                    )
-        elif manager.seat_type == "PP":  # 인당 요금
-            person_fee_menu = Menu.objects.filter(booth=booth, menu_category="person_fee").first()
-            if person_fee_menu and not any(cm.menu_id == person_fee_menu.id for cm in cart_menus):
+        # --- 첫 주문 seat_fee 강제 (PT/PP 공통) ---
+        if _is_first_session(table, now_dt) and manager.seat_type in ("PT", "PP"):
+            fee_menu = Menu.objects.filter(
+                booth=booth,
+                menu_category=SEAT_FEE_CATEGORY  # "seat_fee"
+            ).first()
+
+            # 장바구니에 seat_fee 포함 여부 검사
+            if not any(cm.menu_id == fee_menu.id for cm in cart_menus):
+                label = "테이블 이용료" if manager.seat_type == "PT" else "인당 이용료"
                 return Response(
-                    {"status": "error", "code": 400, "message": "첫 주문에는 인당 이용료를 포함해야 합니다."},
+                    {
+                        "status": "error",
+                        "code": 400,
+                        "message": f"첫 주문에는 {label}를 포함해야 합니다."
+                    },
                     status=400
                 )
 
