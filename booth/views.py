@@ -483,8 +483,9 @@ class TableResetAPIView(APIView):
         try:
             # 5. 상태 out, 활성화 필드 초기화 (주문, 매출에는 영향 X)
             table.status = "out"
-            table.activated_at = None  # 활성화 구간 초기화(퇴장)
-            table.save(update_fields=['status', 'activated_at'])
+            table.deactivated_at = timezone.now()   #  퇴장 시각 기록
+            table.activated_at = None               # 활성화 정보 초기화
+            table.save(update_fields=['status', 'activated_at', 'deactivated_at'])
             # 2️⃣ 장바구니 삭제 (히스토리 남기지 않고 바로 제거)
             Cart.objects.filter(table=table, is_ordered=False).delete()
 
