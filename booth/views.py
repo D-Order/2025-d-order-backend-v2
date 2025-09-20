@@ -347,6 +347,19 @@ class TableDetailView(APIView):
         # 활성화 구간 전체 주문 집계
         orders = Order.objects.filter(table=table, created_at__gte=activated_at).order_by("created_at")
         total_amount = sum(o.order_amount for o in orders)
+        
+        # ✅ 할인 전 금액
+        gross_menu = OrderMenu.objects.filter(order__in=orders).aggregate(
+            total=Sum(F("quantity") * F("fixed_price"))
+        )["total"] or 0
+        gross_set = OrderSetMenu.objects.filter(order__in=orders).aggregate(
+            total=Sum(F("quantity") * F("fixed_price"))
+        )["total"] or 0
+        orders_gross = gross_menu + gross_set
+
+        # ✅ 할인액
+        coupon_discount_total = orders_gross - total_amount
+        
         first_order = orders.first()
         first_order_time = first_order.created_at if first_order else None
 
@@ -425,6 +438,8 @@ class TableDetailView(APIView):
             "data": {
                 "table_num": table.table_num,
                 "table_amount": total_amount,
+                "table_amount_gross": orders_gross,       # 할인 전
+                "coupon_discount_total": coupon_discount_total,
                 "table_status": table.status,
                 "created_at": first_order_time,
                 "orders": orders_json
