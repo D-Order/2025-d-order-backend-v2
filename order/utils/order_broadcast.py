@@ -10,14 +10,16 @@ VISIBLE_MENU_CATEGORIES = ["메뉴", "음료"]
 def expand_order(order: Order):
     expanded = []
 
-    # 단품 메뉴 (세트 아닌 것만)
+    # 단품 메뉴
     order_menus = OrderMenu.objects.filter(order=order, ordersetmenu__isnull=True).select_related("menu")
     for om in order_menus:
+        # 수량 0인 항목 제외
+        if om.quantity <= 0:
+            continue
         if om.menu.menu_category not in VISIBLE_MENU_CATEGORIES:
             continue
-        if om.status == "served" and order.served_at and order.served_at <= now() - timedelta(minutes=5):
+        if om.status == "served" and order.served_at and order.served_at <= now() - timedelta(minutes=1):
             continue
-
 
         # 보정 삭제: DB status 그대로 사용
         status = om.status
@@ -44,11 +46,13 @@ def expand_order(order: Order):
             ordersetmenu=osm
         ).select_related("menu")
         for om in order_menus:
+            # 수량 0인 항목 제외
+            if om.quantity <= 0:
+                continue
             if om.menu.menu_category not in VISIBLE_MENU_CATEGORIES:
                 continue
-            if om.status == "served" and order.served_at and order.served_at <= now() - timedelta(minutes=5):
+            if om.status == "served" and order.served_at and order.served_at <= now() - timedelta(minutes=1):
                 continue
-
 
             # 보정 삭제
             status = om.status
@@ -166,11 +170,24 @@ def broadcast_order_set_update(orderset: OrderSetMenu):
         )
 
 
-def broadcast_order_update(order: Order):
+def broadcast_order_update(order: Order, cancelled_items: list = None):
     booth = order.table.booth
     channel_layer = get_channel_layer()
 
     expanded = expand_order(order)
+
+    # 취소된 항목도 업데이트에 포함 (quantity=0)
+    cancelled_payloads = []
+    if cancelled_items:
+        for item in cancelled_items:
+            cancelled_payloads.append({
+                "ordermenu_id": item["order_menu_id"],
+                "order_id": order.id,
+                "menu_name": item["menu_name"],
+                "quantity": 0,
+                "status": "cancelled",
+                "table_num": order.table.table_num,
+            })
 
     async_to_sync(channel_layer.group_send)(
         f"booth_{booth.id}_orders",
@@ -178,7 +195,7 @@ def broadcast_order_update(order: Order):
             "type": "order_update",
             "data": {
                 "total_revenue": booth.total_revenues,
-                "orders": expanded
+                "orders": expanded + cancelled_payloads  # 합쳐서 보냄
             }
         }
     )
@@ -212,7 +229,7 @@ def broadcast_order_completed(order: Order):
         }
     )
     
-# ✅ 주문 취소 발생 시 broadcast
+# 주문 취소 발생 시 broadcast
 def broadcast_order_cancelled(order: Order, cancelled_items: list):
     """
     cancelled_items 예시:

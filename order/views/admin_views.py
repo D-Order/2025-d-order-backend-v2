@@ -18,7 +18,8 @@ from order.utils.order_broadcast import (
     broadcast_order_item_update,
     broadcast_order_set_update,
     broadcast_order_cancelled,
-    broadcast_total_revenue
+    broadcast_total_revenue,
+    broadcast_order_completed
 )
 
 from statistic.utils import push_statistics
@@ -33,6 +34,8 @@ from order.serializers import *
 
 SEAT_MENU_CATEGORY = "seat"
 SEAT_FEE_CATEGORY = "seat_fee"
+
+VISIBLE_MENU_CATEGORIES = ["메뉴", "음료"]
 
 def get_table_fee_and_type_by_booth(booth_id: int):
     m = Manager.objects.filter(booth_id=booth_id).first()
@@ -96,8 +99,8 @@ class OrderListView(APIView):
                 if type_param == "serving":
                     if om.status not in ["cooked", "served"]:
                         continue
-                    # served 후 5분 지나면 숨김 처리
-                    if om.status == "served" and order.served_at and order.served_at <= now() - timedelta(minutes=5):
+                    # served 후 1분 지나면 숨김 처리 -> 나중에 3분으로 수정
+                    if om.status == "served" and order.served_at and order.served_at <= now() - timedelta(minutes=1):
                         continue
 
                 expanded.append({
@@ -797,22 +800,35 @@ class ServingOrderCompleteView(APIView):
         else:
             broadcast_order_set_update(obj)
 
-        # 빌지 단위 검사 후 전체 완료 시 broadcast
+        # ✅ 빌지 단위 검사 후 전체 완료 시 broadcast
         order = obj.order
-        all_menus = OrderMenu.objects.filter(order=order)
-        all_sets = OrderSetMenu.objects.filter(order=order)
-        if all([m.status == "served" for m in all_menus]) and all([s.status == "served" for s in all_sets]):
-            from order.utils.order_broadcast import broadcast_order_completed
 
-            # 추가: 서빙 완료 시각 기록
+        # 1) 보여지는 단품 메뉴만 검사
+        all_menus = OrderMenu.objects.filter(
+            order=order, menu__menu_category__in=VISIBLE_MENU_CATEGORIES
+        )
+
+        # 2) 보여지는 세트만 검사
+        all_sets_served = True
+        for s in OrderSetMenu.objects.filter(order=order).select_related("set_menu"):
+            child_menus = OrderMenu.objects.filter(
+                ordersetmenu=s, menu__menu_category__in=VISIBLE_MENU_CATEGORIES
+            )
+            if not child_menus.exists():
+                continue  # 보여지는 구성품이 하나도 없으면 그냥 패스
+            if not all(m.status == "served" for m in child_menus):
+                all_sets_served = False
+                break
+
+        # 3) 전체 검사
+        if all([m.status == "served" for m in all_menus]) and all_sets_served:
             order.served_at = now()
             order.save(update_fields=["served_at"])
-
-            # 수정: served_at 포함해서 broadcast
             broadcast_order_completed(order)
 
         # 마지막에 Response 반환
         return Response({"status": "success", "code": 200, "data": data}, status=200)
+
 
 
 class OrderRevertStatusView(APIView):
