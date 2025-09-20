@@ -13,7 +13,7 @@ from datetime import timedelta
 from django.conf import settings
 
 
-def  get_statistics(booth_id: int, request=None):
+def get_statistics(booth_id: int, request=None):
     manager = Manager.objects.get(booth_id=booth_id)
     booth = manager.booth
     now = timezone.now()
@@ -35,8 +35,12 @@ def  get_statistics(booth_id: int, request=None):
 
     # --- 방문자 수 (seat_type 별 계산)
     if manager.seat_type == "PP":  # 인당 요금
+        # ✅ 취소된 주문 제외
         visitors = (
-            OrderMenu.objects.filter(order__table__booth=booth, menu__menu_category="seat_fee")
+            OrderMenu.objects.filter(
+                order__table__booth=booth,
+                menu__menu_category="seat_fee"
+            ).exclude(order__order_status="cancelled")
             .aggregate(total=Sum("quantity"))["total"] or 0
         )
         recent_visitors = (
@@ -44,16 +48,17 @@ def  get_statistics(booth_id: int, request=None):
                 order__table__booth=booth,
                 menu__menu_category="seat_fee",
                 order__created_at__gte=now - timedelta(hours=1),
-            ).aggregate(total=Sum("quantity"))["total"] or 0
+            ).exclude(order__order_status="cancelled")
+            .aggregate(total=Sum("quantity"))["total"] or 0
         )
 
     elif manager.seat_type == "PT":  # 테이블 요금
+        # seat → seat_fee 로 통일, 취소 제외
         visitors = (
             OrderMenu.objects.filter(
                 order__table__booth=booth,
-                menu__menu_category="seat",   # seat_fee → seat
-                order__order_status__in=["confirmed", "completed"]
-            )
+                menu__menu_category="seat_fee"
+            ).exclude(order__order_status="cancelled")
             .values("order__table_id")
             .distinct()
             .count()
@@ -62,10 +67,9 @@ def  get_statistics(booth_id: int, request=None):
         recent_visitors = (
             OrderMenu.objects.filter(
                 order__table__booth=booth,
-                menu__menu_category="seat",   # seat_fee → seat
-                order__order_status__in=["confirmed", "completed"],
+                menu__menu_category="seat_fee",
                 order__created_at__gte=now - timedelta(hours=1)
-            )
+            ).exclude(order__order_status="cancelled")
             .values("order__table_id")
             .distinct()
             .count()
@@ -74,34 +78,40 @@ def  get_statistics(booth_id: int, request=None):
     # --- 평균 대기 시간 (OrderMenu 단위 created_at → served 시각)
     served_menus = (
         OrderMenu.objects.filter(order__table__booth=booth, status="served")
-        .exclude(menu__menu_category__in=["seat", "seat_fee"])
+        .exclude(menu__menu_category="seat_fee")  # seat_fee는 집계에서 제외
         .values_list("created_at", "updated_at")
     )
-    if served_menus:
-        total_wait = sum([(u - c).total_seconds() for c, u in served_menus])
-        avg_wait = int(total_wait / len(served_menus) // 60)
+    # None 값/0초 제외, 분단위로 소수점까지 반올림
+    wait_times = [
+        (u - c).total_seconds() for c, u in served_menus
+        if u and c and u > c
+    ]
+    if wait_times:
+        avg_wait = round(sum(wait_times) / len(wait_times) / 60, 1)
     else:
         avg_wait = 0
 
     # --- 서빙 완료/대기 중 (OrderMenu.status 기준)
+    # seat_fee 제외
     served_count = OrderMenu.objects.filter(
         order__table__booth=booth,
         status="served"
-    ).exclude(menu__menu_category__in=["seat", "seat_fee"]).count()
+    ).exclude(menu__menu_category="seat_fee").count()
 
     waiting_count = OrderMenu.objects.filter(
         order__table__booth=booth,
         status__in=["pending", "cooked"]
-    ).exclude(menu__menu_category__in=["seat", "seat_fee"]).count()
+    ).exclude(menu__menu_category="seat_fee").count()
 
     # --- TOP3 메뉴
     top3 = (
         OrderMenu.objects.filter(order__table__booth=booth)
-        .exclude(menu__menu_category__in=["seat", "seat_fee"])
+        .exclude(menu__menu_category__in=["seat_fee", "음료"])  # seat_fee + 음료 제외
         .values("menu__menu_name", "menu__menu_price", "menu__menu_image")
         .annotate(total_quantity=Sum("quantity"))
         .order_by("-total_quantity")[:3]
     )
+
     top3_menus = [
         {
             "menu__menu_name": m["menu__menu_name"],
@@ -119,7 +129,7 @@ def  get_statistics(booth_id: int, request=None):
     # --- 품절 임박 메뉴
     low_stock_qs = (
         Menu.objects.filter(booth=booth)
-        .exclude(menu_category__in=["seat", "seat_fee"])
+        .exclude(menu_category="seat_fee")  # seat_fee 제외
         .annotate(
             reserved=Coalesce(
                 Sum(
@@ -160,7 +170,6 @@ def  get_statistics(booth_id: int, request=None):
 
     avg_table_usage = int(sum(table_usages) / len(table_usages)) if table_usages else 0
 
-
     # --- 회전율 (%): 영업시간 ÷ 평균 이용시간 × 테이블 수
     first_order = Order.objects.filter(table__booth=booth).order_by("created_at").first()
     table_count = Table.objects.filter(booth=booth, activated_at__isnull=False).count()
@@ -170,24 +179,6 @@ def  get_statistics(booth_id: int, request=None):
         turnover_rate = math.floor((business_minutes / avg_table_usage) * table_count * 10) / 10
     else:
         turnover_rate = 0.0
-
-    # --- 메뉴별 평균 대기시간 (추후 필요시 사용) ---
-    # menu_waits = (
-    #     OrderMenu.objects.filter(order__table__booth=booth, status="served")
-    #     .exclude(menu__menu_category__in=["seat", "seat_fee"])
-    #     .annotate(
-    #         wait_time=ExpressionWrapper(
-    #             F("updated_at") - F("created_at"),
-    #             output_field=DurationField(),
-    #         )
-    #     )
-    #     .values("menu__menu_name")
-    #     .annotate(avg_wait=Avg("wait_time"))
-    # )
-    # menu_wait_times = [
-    #     {"menu_name": m["menu__menu_name"], "avg_wait_minutes": int(m["avg_wait"].total_seconds() // 60)}
-    #     for m in menu_waits if m["avg_wait"] is not None
-    # ]
 
     return {
         "total_orders": total_orders,
@@ -201,8 +192,7 @@ def  get_statistics(booth_id: int, request=None):
         "low_stock": low_stock,
         "avg_table_usage": avg_table_usage,
         "turnover_rate": turnover_rate,
-        # "menu_wait_times": menu_wait_times,  #  현재는 주석 처리
-        "seat_type": manager.seat_type,
+        "seat_type": manager.seat_type,  # 프론트에서 구분할 수 있게 seat_type 전달
     }
 
 
