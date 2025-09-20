@@ -46,13 +46,30 @@ def  get_statistics(booth_id: int, request=None):
                 order__created_at__gte=now - timedelta(hours=1),
             ).aggregate(total=Sum("quantity"))["total"] or 0
         )
-    elif manager.seat_type == "PT":  # 테이블 요금
-        visitors = Table.objects.filter(booth=booth, activated_at__isnull=False).count()
-        recent_visitors = Table.objects.filter(
-            booth=booth, activated_at__gte=now - timedelta(hours=1)
-        ).count()
-    else:
-        visitors, recent_visitors = 0, 0
+    elif manager.seat_type == "PT":
+        # 테이블 요금제: seat / seat_fee 메뉴 중 '확정된 주문' 기준으로 방문자 수 계산
+        visitors = (
+            OrderMenu.objects.filter(
+                order__table__booth=booth,
+                menu__menu_category="seat_fee",
+                order__order_status__in=["confirmed", "completed"]  # ✅ 주문 확정/완료 상태만
+            )
+            .values("order__table_id")  # 테이블 단위로
+            .distinct()
+            .count()
+        )
+
+        recent_visitors = (
+            OrderMenu.objects.filter(
+                order__table__booth=booth,
+                menu__menu_category="seat_fee",
+                order__order_status__in=["confirmed", "completed"],
+                order__created_at__gte=now - timedelta(hours=1)  # 최근 1시간
+            )
+            .values("order__table_id")
+            .distinct()
+            .count()
+        )
 
     # --- 평균 대기 시간 (OrderMenu 단위 created_at → served 시각)
     served_menus = (
@@ -108,7 +125,9 @@ def  get_statistics(booth_id: int, request=None):
         )
         .annotate(remaining=Greatest(F("menu_amount") - F("reserved"), Value(0)))
         .filter(remaining__lte=5)
+        .order_by("remaining", "menu_name")  # 추가
     )
+
     low_stock = [
         {
             "menu_name": m.menu_name,
@@ -122,21 +141,19 @@ def  get_statistics(booth_id: int, request=None):
         }
         for m in low_stock_qs
     ]
+
     # --- 평균 테이블 사용시간 (entered_at ~ 마지막 served 메뉴 시각)
     table_usages = []
     for table in Table.objects.filter(booth=booth, activated_at__isnull=False):
-        last_served = (
-            OrderMenu.objects.filter(order__table=table, status="served")
-            .order_by("-updated_at")
-            .values_list("updated_at", flat=True)
-            .first()
-        )
-        if last_served:
-            usage = (last_served - table.activated_at).total_seconds() // 60
+        if table.activated_at:
+            if table.deactivated_at:  # 이미 초기화된 테이블
+                usage = (table.deactivated_at - table.activated_at).total_seconds() // 60
+            else:  # 아직 사용 중인 테이블
+                usage = (now - table.activated_at).total_seconds() // 60
             table_usages.append(usage)
 
-    # 평균 테이블 사용시간: 소수점 버림 (정수 분)
     avg_table_usage = int(sum(table_usages) / len(table_usages)) if table_usages else 0
+
 
     # --- 회전율 (%): 영업시간 ÷ 평균 이용시간 × 테이블 수
     first_order = Order.objects.filter(table__booth=booth).order_by("created_at").first()
