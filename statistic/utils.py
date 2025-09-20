@@ -46,15 +46,15 @@ def  get_statistics(booth_id: int, request=None):
                 order__created_at__gte=now - timedelta(hours=1),
             ).aggregate(total=Sum("quantity"))["total"] or 0
         )
-    elif manager.seat_type == "PT":
-        # 테이블 요금제: seat / seat_fee 메뉴 중 '확정된 주문' 기준으로 방문자 수 계산
+
+    elif manager.seat_type == "PT":  # 테이블 요금
         visitors = (
             OrderMenu.objects.filter(
                 order__table__booth=booth,
-                menu__menu_category="seat_fee",
-                order__order_status__in=["confirmed", "completed"]  # ✅ 주문 확정/완료 상태만
+                menu__menu_category="seat",   # seat_fee → seat
+                order__order_status__in=["confirmed", "completed"]
             )
-            .values("order__table_id")  # 테이블 단위로
+            .values("order__table_id")
             .distinct()
             .count()
         )
@@ -62,9 +62,9 @@ def  get_statistics(booth_id: int, request=None):
         recent_visitors = (
             OrderMenu.objects.filter(
                 order__table__booth=booth,
-                menu__menu_category="seat_fee",
+                menu__menu_category="seat",   # seat_fee → seat
                 order__order_status__in=["confirmed", "completed"],
-                order__created_at__gte=now - timedelta(hours=1)  # 최근 1시간
+                order__created_at__gte=now - timedelta(hours=1)
             )
             .values("order__table_id")
             .distinct()
@@ -74,6 +74,7 @@ def  get_statistics(booth_id: int, request=None):
     # --- 평균 대기 시간 (OrderMenu 단위 created_at → served 시각)
     served_menus = (
         OrderMenu.objects.filter(order__table__booth=booth, status="served")
+        .exclude(menu__menu_category__in=["seat", "seat_fee"])
         .values_list("created_at", "updated_at")
     )
     if served_menus:
@@ -83,10 +84,15 @@ def  get_statistics(booth_id: int, request=None):
         avg_wait = 0
 
     # --- 서빙 완료/대기 중 (OrderMenu.status 기준)
-    served_count = OrderMenu.objects.filter(order__table__booth=booth, status="served").count()
+    served_count = OrderMenu.objects.filter(
+        order__table__booth=booth,
+        status="served"
+    ).exclude(menu__menu_category__in=["seat", "seat_fee"]).count()
+
     waiting_count = OrderMenu.objects.filter(
-        order__table__booth=booth, status__in=["pending", "cooked"]
-    ).count()
+        order__table__booth=booth,
+        status__in=["pending", "cooked"]
+    ).exclude(menu__menu_category__in=["seat", "seat_fee"]).count()
 
     # --- TOP3 메뉴
     top3 = (
