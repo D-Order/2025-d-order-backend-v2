@@ -25,12 +25,25 @@ SEAT_FEE_CATEGORY = "seat_fee"
 
 
 def _is_first_session(table: Table, now_dt=None) -> bool:
-    """해당 테이블이 초기화된 이후 첫 주문인지 판별"""
+    """
+    테이블이 '리셋 이후' 또는 '재입장 이후' 첫 주문인지 확인
+    """
     activated_at = getattr(table, "activated_at", None)
+    deactivated_at = getattr(table, "deactivated_at", None)
+
     qs = Order.objects.filter(table_id=table.id)
+
+    # ✅ 리셋 이후 주문만 확인
+    if deactivated_at:
+        qs = qs.filter(created_at__gte=deactivated_at)
+
+    # ✅ 입장 이후 주문만 확인 (안전망)
     if activated_at:
         qs = qs.filter(created_at__gte=activated_at)
+
+    # 주문이 하나도 없으면 첫 주문
     return not qs.exists()
+
 
 def get_table_fee_and_type_by_booth(booth_id: int):
     m = Manager.objects.filter(booth_id=booth_id).first()
