@@ -8,6 +8,16 @@ from datetime import timedelta
 VISIBLE_MENU_CATEGORIES = ["메뉴", "음료"]
 
 def expand_order(order: Order):
+    table = order.table
+
+    ### 아직 세션 시작 안 한 테이블이면 빈 리스트
+    if not table.activated_at:
+        return []
+
+    ### 세션 시작 이전 주문은 무시
+    if order.created_at < table.activated_at:
+        return []
+    
     expanded = []
 
     # 단품 메뉴
