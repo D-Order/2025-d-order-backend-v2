@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils.timezone import now
 
 class Booth(models.Model):
     booth_name = models.CharField(max_length=100)
@@ -17,3 +18,42 @@ class Table(models.Model):
     
     def __str__(self):
         return f"[{self.booth.booth_name}] - Table #{self.table_num}"
+    
+    def deactivate(self):
+        """
+        테이블 초기화 시 TableUsage 로그를 기록하고 상태 초기화
+        """
+        if self.activated_at:
+            ended = now()
+            usage_minutes = int((ended - self.activated_at).total_seconds() // 60)
+            TableUsage.objects.create(
+                table=self,
+                booth=self.booth,
+                started_at=self.activated_at,
+                ended_at=ended,
+                usage_minutes=usage_minutes,
+            )
+            # 상태 초기화
+            self.status = "out"
+            self.activated_at = None
+            self.deactivated_at = ended
+            self.save(update_fields=["status", "activated_at", "deactivated_at"])
+
+
+class TableUsage(models.Model):
+    """
+    테이블 사용 이력 로그
+    """
+    table = models.ForeignKey(Table, on_delete=models.CASCADE)
+    booth = models.ForeignKey(Booth, on_delete=models.CASCADE)
+    started_at = models.DateTimeField()
+    ended_at = models.DateTimeField()
+    usage_minutes = models.IntegerField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"TableUsage #{self.pk} - Table {self.table.table_num} ({self.usage_minutes}분)"
