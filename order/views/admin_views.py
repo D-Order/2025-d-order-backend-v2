@@ -79,8 +79,11 @@ class OrderListView(APIView):
         for table in Table.objects.filter(booth_id=booth_id):
             activated_at = getattr(table, "activated_at", None)
             qs = order_query.filter(table=table)
-            if activated_at:
-                qs = qs.filter(created_at__gte=activated_at)
+
+            if not activated_at:
+                continue  # 활성화 안 된 테이블은 건너뜀
+            
+            qs = qs.filter(created_at__gte=activated_at)
             valid_orders.extend(list(qs))
             
         total_revenue = booth.total_revenues
@@ -607,9 +610,9 @@ class OrderCancelView(APIView):
                     total_refund_sum += refund_amount
 
                     # 단건 주문 업데이트 방송 유지
-                    broadcast_order_update(order)
+                    broadcast_order_update(order, cancelled_items=updated_items)
                     
-                    # ✅ 추가: 주문 취소 이벤트 브로드캐스트
+                    # 추가: 주문 취소 이벤트 브로드캐스트
                     broadcast_order_cancelled(order, [
                         {
                             "order_menu_id": u.get("order_menu_id"),
