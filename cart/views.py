@@ -23,10 +23,10 @@ SEAT_FEE_CATEGORY = "seat_fee"
 
 def _is_first_session(table: Table, now_dt=None) -> bool:
     """해당 테이블이 초기화된 이후 첫 주문인지 판별"""
-    entered_at = getattr(table, "entered_at", None)
+    activated_at = getattr(table, "activated_at", None)
     qs = Order.objects.filter(table_id=table.id)
-    if entered_at:
-        qs = qs.filter(created_at__gte=entered_at)
+    if activated_at:
+        qs = qs.filter(created_at__gte=activated_at)
     return not qs.exists()
 
 
