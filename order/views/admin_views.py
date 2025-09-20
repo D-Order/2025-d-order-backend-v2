@@ -13,7 +13,14 @@ from rest_framework.status import (
 
 )
 
-from order.utils.order_broadcast import broadcast_order_update, broadcast_total_revenue
+from order.utils.order_broadcast import (
+    broadcast_order_update,
+    broadcast_order_item_update,
+    broadcast_order_set_update,
+    broadcast_order_cancelled,
+    broadcast_total_revenue
+)
+
 from statistic.utils import push_statistics
 
 from order.models import *
@@ -23,11 +30,6 @@ from menu.models import *
 from booth.models import *
 from manager.models import *
 from order.serializers import *
-from order.utils.order_broadcast import (
-    broadcast_order_update,
-    broadcast_order_item_update,
-    broadcast_order_set_update,
-)
 
 SEAT_MENU_CATEGORY = "seat"
 SEAT_FEE_CATEGORY = "seat_fee"
@@ -94,8 +96,8 @@ class OrderListView(APIView):
                 if type_param == "serving":
                     if om.status not in ["cooked", "served"]:
                         continue
-                    # served 후 60초 지나면 숨김 처리 -> 추후 수정 필요
-                    if om.status == "served" and om.updated_at <= now() - timedelta(seconds=60):
+                    # served 후 5분 지나면 숨김 처리
+                    if om.status == "served" and order.served_at and order.served_at <= now() - timedelta(minutes=5):
                         continue
 
                 expanded.append({
@@ -603,6 +605,16 @@ class OrderCancelView(APIView):
 
                     # 단건 주문 업데이트 방송 유지
                     broadcast_order_update(order)
+                    
+                    # ✅ 추가: 주문 취소 이벤트 브로드캐스트
+                    broadcast_order_cancelled(order, [
+                        {
+                            "order_menu_id": u.get("order_menu_id"),
+                            "menu_name": u.get("menu_name"),
+                            "quantity": u.get("canceled_quantity") or u.get("canceled_sets", 0),
+                        }
+                        for u in updated_items if u["order_id"] == order.id
+                    ])
 
                 # 부스 매출 차감 + 방송/통계
                 if total_refund_sum > 0:
@@ -791,6 +803,12 @@ class ServingOrderCompleteView(APIView):
         all_sets = OrderSetMenu.objects.filter(order=order)
         if all([m.status == "served" for m in all_menus]) and all([s.status == "served" for s in all_sets]):
             from order.utils.order_broadcast import broadcast_order_completed
+
+            # 추가: 서빙 완료 시각 기록
+            order.served_at = now()
+            order.save(update_fields=["served_at"])
+
+            # 수정: served_at 포함해서 broadcast
             broadcast_order_completed(order)
 
         # 마지막에 Response 반환
