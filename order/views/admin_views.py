@@ -837,14 +837,11 @@ class ServingOrderCompleteView(APIView):
         # 마지막에 Response 반환
         return Response({"status": "success", "code": 200, "data": data}, status=200)
 
-
-
 class OrderRevertStatusView(APIView):
     """
     PATCH /api/v2/orders/revert-status/
     {
-        "id": <ordermenu_id or ordersetmenu_id>,
-        "type": "menu" | "setmenu",
+        "id": <ordermenu_id>,
         "target_status": "pending" | "cooked"
     }
     """
@@ -852,32 +849,33 @@ class OrderRevertStatusView(APIView):
 
     def patch(self, request):
         item_id = request.data.get("id")
-        item_type = request.data.get("type")   # ✅ 구분 추가
         target_status = request.data.get("target_status")
 
-        if not item_id or item_type not in ["menu", "setmenu"] or target_status not in ["pending", "cooked"]:
+        if not item_id or target_status not in ["pending", "cooked"]:
             return Response(
-                {"status": "error", "code": 400,
-                "message": "id, type(menu|setmenu), target_status(pending|cooked) 필수"},
-                status=400
+                {
+                    "status": "error",
+                    "code": 400,
+                    "message": "id, target_status(pending|cooked) 필수",
+                },
+                status=400,
             )
 
-        if item_type == "menu":
-            obj = OrderMenu.objects.filter(pk=item_id).select_related("menu", "order").first()
-        else:
-            obj = OrderSetMenu.objects.filter(pk=item_id).select_related("set_menu", "order").first()
-
+        obj = OrderMenu.objects.filter(pk=item_id).select_related("menu", "order").first()
         if not obj:
             return Response(
-                {"status": "error", "code": 404,
-                "message": f"{item_type} {item_id} 찾을 수 없음"},
-                status=404
+                {
+                    "status": "error",
+                    "code": 404,
+                    "message": f"OrderMenu {item_id} 찾을 수 없음",
+                },
+                status=404,
             )
 
         prev_status = obj.status
 
         # --- 허용 전이 규칙 정의 ---
-        if item_type == "menu" and obj.menu.menu_category == "음료":
+        if obj.menu.menu_category == "음료":
             allowed = {
                 "cooked": ["pending"],
                 "served": ["cooked", "pending"],  # 음료는 served → cooked / pending 둘 다 허용
@@ -891,31 +889,31 @@ class OrderRevertStatusView(APIView):
         # --- 유효성 검사 ---
         if target_status not in allowed.get(prev_status, []):
             return Response(
-                {"status": "error", "code": 400,
-                "message": f"{prev_status} → {target_status} 되돌리기 불가"},
-                status=400
+                {
+                    "status": "error",
+                    "code": 400,
+                    "message": f"{prev_status} → {target_status} 되돌리기 불가",
+                },
+                status=400,
             )
 
-        # --- 상태 업데이트 (✅ OrderMenu + OrderSetMenu 공통 처리) ---
+        # --- 상태 업데이트 ---
         from django.utils.timezone import now
 
         obj.status = target_status
-
         if target_status == "pending":
             obj.cooked_at = None
             obj.served_at = None
             obj.save(update_fields=["status", "cooked_at", "served_at"])
-
         elif target_status == "cooked":
             obj.cooked_at = now()
             obj.served_at = None
             obj.save(update_fields=["status", "cooked_at", "served_at"])
-
         else:
             obj.save(update_fields=["status"])
 
-        # --- 세트 동기화 (OrderMenu일 때만) ---
-        if item_type == "menu" and obj.ordersetmenu_id:
+        # --- 세트 동기화 ---
+        if obj.ordersetmenu_id:
             setmenu = obj.ordersetmenu
             statuses = OrderMenu.objects.filter(
                 ordersetmenu=setmenu
@@ -935,23 +933,22 @@ class OrderRevertStatusView(APIView):
             setmenu.save(update_fields=["status", "cooked_at", "served_at"])
 
         # --- 단건 broadcast ---
-        if item_type == "menu":
-            broadcast_order_item_update(obj)
-        else:
-            broadcast_order_set_update(obj)
+        broadcast_order_item_update(obj)
 
-        return Response({
-            "status": "success",
-            "code": 200,
-            "message": f"{prev_status} → {target_status} 변경됨",
-            "data": {
-                "type": item_type,
-                "order_item_id": obj.id,
-                "prev_status": prev_status,
-                "new_status": target_status,
-                "table_num": obj.order.table.table_num
-            }
-        }, status=200)
+        return Response(
+            {
+                "status": "success",
+                "code": 200,
+                "message": f"{prev_status} → {target_status} 변경됨",
+                "data": {
+                    "order_item_id": obj.id,
+                    "prev_status": prev_status,
+                    "new_status": target_status,
+                    "table_num": obj.order.table.table_num,
+                },
+            },
+            status=200,
+        )
         
 class StaffCallListAPIView(APIView):
     permission_classes = [IsAuthenticated]  # JWT 인증 필수
