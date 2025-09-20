@@ -15,8 +15,9 @@ def expand_order(order: Order):
     for om in order_menus:
         if om.menu.menu_category not in VISIBLE_MENU_CATEGORIES:
             continue
-        # if om.status == "served" and om.updated_at <= now() - timedelta(seconds=60):
-        #     continue
+        if om.status == "served" and order.served_at and order.served_at <= now() - timedelta(minutes=5):
+            continue
+
 
         # 보정 삭제: DB status 그대로 사용
         status = om.status
@@ -45,8 +46,9 @@ def expand_order(order: Order):
         for om in order_menus:
             if om.menu.menu_category not in VISIBLE_MENU_CATEGORIES:
                 continue
-            # if om.status == "served" and om.updated_at <= now() - timedelta(seconds=60):
-            #     continue
+            if om.status == "served" and order.served_at and order.served_at <= now() - timedelta(minutes=5):
+                continue
+
 
             # 보정 삭제
             status = om.status
@@ -205,6 +207,30 @@ def broadcast_order_completed(order: Order):
             "data": {
                 "order_id": order.id,
                 "table_num": order.table.table_num,
+                "served_at": order.served_at.isoformat() if order.served_at else None
+            }
+        }
+    )
+    
+# ✅ 주문 취소 발생 시 broadcast
+def broadcast_order_cancelled(order: Order, cancelled_items: list):
+    """
+    cancelled_items 예시:
+    [
+    {"order_menu_id": 123, "menu_name": "사이다", "quantity": 1}
+    ]
+    """
+    booth = order.table.booth
+    channel_layer = get_channel_layer()
+
+    async_to_sync(channel_layer.group_send)(
+        f"booth_{booth.id}_orders",
+        {
+            "type": "order_cancelled",
+            "data": {
+                "order_id": order.id,
+                "table_num": order.table.table_num,
+                "cancelled_items": cancelled_items,
             }
         }
     )
