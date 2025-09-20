@@ -157,6 +157,13 @@ class OrderConsumer(AsyncWebsocketConsumer):
             "type": "ORDER_COMPLETED",
             "data": event["data"]   # { order_id, table_num }
         }))
+        
+    async def order_cancelled(self, event):
+        await self.send(text_data=json.dumps({
+            "type": "ORDER_CANCELLED",
+            "data": event["data"]
+        }))
+
 
 
 
