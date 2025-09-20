@@ -49,6 +49,9 @@ class OrderMenu(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # 새로운 필드들
+    cooked_at = models.DateTimeField(null=True, blank=True)
+    served_at = models.DateTimeField(null=True, blank=True)
     def __str__(self):
         return f"OrderMenu #{self.pk} - {self.menu.menu_name} x{self.quantity}"
 
@@ -79,6 +82,9 @@ class OrderSetMenu(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # 새로운 필드들
+    cooked_at = models.DateTimeField(null=True, blank=True)
+    served_at = models.DateTimeField(null=True, blank=True)
     def __str__(self):
         return f"OrderSetMenu #{self.pk} - {self.set_menu.set_name} x{self.quantity}"
 
