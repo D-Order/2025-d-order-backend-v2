@@ -133,8 +133,11 @@ def get_statistics(booth_id: int, request=None):
                 # REST API (request 있는 경우 → 절대경로)
                 request.build_absolute_uri(f"{settings.MEDIA_URL}{m['menu__menu_image']}")
                 if request and m.get("menu__menu_image") not in [None, ""]
-                # WS API (request 없는 경우 → /media/... 상대경로)
-                else (f"{settings.MEDIA_URL}{m['menu__menu_image']}" if m.get("menu__menu_image") else None)
+                # WS API (request 없는 경우 → 풀 URL 하드코딩으로 함)
+                else (
+                    f"https://api.test-d-order.store{settings.MEDIA_URL}{m['menu__menu_image']}"
+                    if m.get("menu__menu_image") else None
+                )
             ),
             "total_quantity": m["total_quantity"],
         }
@@ -157,8 +160,11 @@ def get_statistics(booth_id: int, request=None):
                 # REST API (request 있는 경우 → 절대경로)
                 request.build_absolute_uri(f"{settings.MEDIA_URL}{m.menu_image.name}")
                 if request and m.menu_image
-                # WS API (request 없는 경우 → /media/... 상대경로)
-                else (f"{settings.MEDIA_URL}{m.menu_image.name}" if m.menu_image else None)
+                # WS API (request 없는 경우 → 풀 URL 하드코딩으로 함)
+                else (
+                    f"https://api.test-d-order.store{settings.MEDIA_URL}{m.menu_image.name}"
+                    if m.menu_image else None
+                )
             ),
             "remaining": m.menu_amount,   # 운영자가 수정한 수량 그대로 반영
         }
