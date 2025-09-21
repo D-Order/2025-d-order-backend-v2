@@ -186,16 +186,16 @@ def broadcast_order_update(order: Order, cancelled_items: list = None):
 
     expanded = expand_order(order)
 
-    # 취소된 항목도 업데이트에 포함 (quantity=0)
     cancelled_payloads = []
     if cancelled_items:
         for item in cancelled_items:
+            rest_qty = item.get("rest_quantity", 0)
             cancelled_payloads.append({
-                "ordermenu_id": item["order_menu_id"],
+                "ordermenu_id": item.get("order_menu_id"),
                 "order_id": order.id,
-                "menu_name": item["menu_name"],
-                "quantity": 0,
-                "status": "cancelled",
+                "menu_name": item.get("menu_name"),
+                "quantity": rest_qty,   # 남은 수량 반영
+                "status": "cancelled" if rest_qty == 0 else "pending",  # ✅ 전량 취소일 때만 cancelled
                 "table_num": order.table.table_num,
             })
 
@@ -205,7 +205,7 @@ def broadcast_order_update(order: Order, cancelled_items: list = None):
             "type": "order_update",
             "data": {
                 "total_revenue": booth.total_revenues,
-                "orders": expanded + cancelled_payloads  # 합쳐서 보냄
+                "orders": expanded + cancelled_payloads
             }
         }
     )
