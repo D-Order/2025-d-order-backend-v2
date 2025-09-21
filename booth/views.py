@@ -655,6 +655,13 @@ class BoothDeleteAPIView(APIView):
                     activated_at=None,
                     deactivated_at=None
                 )
+                
+                # 쿠폰 사용 내역 삭제
+                TableCoupon.objects.filter(table__booth=booth).delete()
+                CouponCode.objects.filter(coupon__booth=booth).update(
+                    issued_to_table=None,
+                    used_at=None
+                )
 
             return Response(
                 {
