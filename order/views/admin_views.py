@@ -270,7 +270,8 @@ class OrderCancelView(APIView):
                             {
                                 "status": "error",
                                 "code": 400,
-                                "message": f"요청 취소 수량({cancel_qty})이 취소 가능 수량({available})을 초과했습니다.",
+                                "message": f"요청 수량 {cancel_qty}개 중 {cancel_qty - available}개는 이미 서빙 완료되어 취소 불가합니다. "
+                                           f"따라서 최대 {available}개만 취소할 수 있습니다.",
                                 "data": {
                                     "type": item_type,
                                     "order_item_ids": order_item_ids,
