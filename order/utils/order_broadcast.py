@@ -197,6 +197,7 @@ def broadcast_order_update(order: Order, cancelled_items: list = None):
                 "quantity": rest_qty,   # 남은 수량 반영
                 "status": "cancelled" if rest_qty == 0 else "pending",  # ✅ 전량 취소일 때만 cancelled
                 "table_num": order.table.table_num,
+                "created_at": order.created_at.isoformat(),  # 추가
             })
 
     async_to_sync(channel_layer.group_send)(
