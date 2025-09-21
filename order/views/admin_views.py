@@ -102,8 +102,8 @@ class OrderListView(APIView):
                 if type_param == "serving":
                     if om.status not in ["cooked", "served"]:
                         continue
-                    # served 후 1분 지나면 숨김 처리 -> 나중에 3분으로 수정
-                    if om.status == "served" and order.served_at and order.served_at <= now() - timedelta(minutes=1):
+                    # served 후 3분 30초 지나면으로 수정
+                    if om.status == "served" and order.served_at and order.served_at <= now() - timedelta(minutes=3.5):
                         continue
 
                 expanded.append({

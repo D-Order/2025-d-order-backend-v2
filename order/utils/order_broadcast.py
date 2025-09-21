@@ -28,7 +28,7 @@ def expand_order(order: Order):
             continue
         if om.menu.menu_category not in VISIBLE_MENU_CATEGORIES:
             continue
-        if om.status == "served" and order.served_at and order.served_at <= now() - timedelta(minutes=1):
+        if om.status == "served" and order.served_at and order.served_at <= now() - timedelta(minutes=3.5):
             continue
 
         # 보정 삭제: DB status 그대로 사용
@@ -61,7 +61,7 @@ def expand_order(order: Order):
                 continue
             if om.menu.menu_category not in VISIBLE_MENU_CATEGORIES:
                 continue
-            if om.status == "served" and order.served_at and order.served_at <= now() - timedelta(minutes=1):
+            if om.status == "served" and order.served_at and order.served_at <= now() - timedelta(minutes=3.5):
                 continue
 
             # 보정 삭제
