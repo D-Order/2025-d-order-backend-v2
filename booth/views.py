@@ -2,6 +2,7 @@ import math
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from booth.models import Booth, Table
+from coupon.models import TableCoupon, CouponCode
 from django.utils import timezone
 from datetime import timedelta
 from order.models import *
@@ -615,7 +616,7 @@ class BoothDeleteAPIView(APIView):
     - Table.status = "out", activated_at=None, deactivated_at=None
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = []
 
     def delete(self, request, booth_id: int):
         manager = getattr(request.user, "manager_profile", None)
