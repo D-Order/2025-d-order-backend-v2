@@ -270,4 +270,8 @@ CORS_ALLOWED_ORIGINS = [
 
     'https://d-order-admin-v2.netlify.app',
     'https://d-order-customer-v2.netlify.app',
+
+
+    # 2025 동국대 가을 축제 사이트 백엔드 주소
+    "https://doyoun.shop"
 ]
