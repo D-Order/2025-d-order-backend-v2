@@ -603,7 +603,7 @@ class TableResetAPIView(APIView):
             
 class BoothDeleteAPIView(APIView):
     """
-    DELETE /api/v2/booths/<int:booth_id>/reset/
+    DELETE /api/v2/booth/<int:booth_id>/reset/
     운영자가 자신의 부스의 '사용자 기록'을 모두 삭제하는 API
     (메뉴/쿠폰/부스 자체는 삭제하지 않음)
 
@@ -637,7 +637,7 @@ class BoothDeleteAPIView(APIView):
 
         try:
             with transaction.atomic():
-                # 1) 주문 삭제 (Order CASCADE로 OrderMenu, OrderSetMenu 같이 삭제됨)
+                # 1) 주문 삭제
                 Order.objects.filter(table__booth=booth).delete()
 
                 # 2) 장바구니 삭제
@@ -650,7 +650,7 @@ class BoothDeleteAPIView(APIView):
                 from booth.models import TableUsage
                 TableUsage.objects.filter(booth=booth).delete()
 
-                # 5) 테이블 초기화 (상태/시간 리셋)
+                # 5) 테이블 초기화
                 Table.objects.filter(booth=booth).update(
                     status="out",
                     activated_at=None,
@@ -664,7 +664,11 @@ class BoothDeleteAPIView(APIView):
                     used_at=None
                 )
 
-            # ✅ 총매출만 웹소켓으로 0으로 반영 (lazy import)
+                # booth.total_revenues도 초기화
+                booth.total_revenues = 0
+                booth.save(update_fields=["total_revenues"])
+
+            # 총매출만 웹소켓으로 0으로 반영 (lazy import)
             from order.utils.order_broadcast import broadcast_total_revenue
 
             total_revenue = Order.objects.filter(table__booth=booth).aggregate(
