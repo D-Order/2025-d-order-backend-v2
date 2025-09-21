@@ -29,6 +29,22 @@ def _is_first_session(table: Table, now_dt=None) -> bool:
         qs = qs.filter(created_at__gte=activated_at)
     return not qs.exists()
 
+def _ordered_pt_seat_fee_in_session(table: Table) -> bool:
+    """
+    현재 테이블 활성화(activated_at) 이후 OrderMenu에서
+    PT seat_fee 메뉴가 이미 주문된 적 있는지 검사
+    """
+    activated_at = getattr(table, "activated_at", None)
+    if not activated_at:
+        return False
+
+    return OrderMenu.objects.filter(
+        order__table=table,
+        order__created_at__gte=activated_at,
+        menu__menu_category=SEAT_FEE_CATEGORY
+    ).exists()
+
+
 
 class CartDetailView(APIView):
     def get(self, request):
@@ -217,8 +233,20 @@ class CartAddView(APIView):
                     {"status": "fail", "message": "해당 부스는 테이블 이용료가 없습니다."},
                     status=HTTP_400_BAD_REQUEST,
                 )
+            
+            if manager.seat_type == "PT":
+            # 첫 주문이 아니면 추가 불가
+                if not _is_first_session(table):
+                    return Response({"status": "fail", "message": "테이블당 이용료는 첫 주문에서만 담을 수 있습니다."}, status=400)
+                # OrderMenu에 이미 주문된 적 있으면 재추가 불가
+                if _ordered_pt_seat_fee_in_session(table):
+                    return Response({"status": "fail", "message": "현재 세션에서 테이블당 이용료는 이미 주문되었습니다."}, status=409)
+                quantity = 1  # 강제 1
+                fee_price = manager.seat_tax_table
+                menu_name = "테이블 이용료(테이블당)"
 
-            if manager.seat_type == "PP":  # 인당 과금
+
+            elif manager.seat_type == "PP":  # 인당 과금
                 if quantity <= 0:
                     return Response(
                         {"status": "fail", "message": "인원수는 1명 이상이어야 합니다."},
@@ -226,11 +254,8 @@ class CartAddView(APIView):
                     )
                 fee_price = manager.seat_tax_person
                 menu_name = "테이블 이용료(인당)"
-            elif manager.seat_type == "PT":  # 테이블당 과금
-                quantity = 1  # 강제 1개
-                fee_price = manager.seat_tax_table
-                menu_name = "테이블 이용료(테이블당)"
-
+                
+           
             # seat_fee 전용 Menu (없으면 생성)
             fee_menu, _ = Menu.objects.get_or_create(
                 booth=manager.booth,
@@ -400,6 +425,12 @@ class CartMenuUpdateView(APIView):
                     {"status": "fail", "message": "해당 테이블 이용료를 찾을 수 없습니다."},
                     status=404
                 )
+                
+            manager = get_object_or_404(Manager, booth_id=booth_id)
+
+            # ✅ PT는 수량 1 초과 금지
+            if manager.seat_type == "PT" and quantity > 1:
+                return Response({"status": "fail", "message": "테이블당 이용료는 수량을 1 이상으로 늘릴 수 없습니다."}, status=400)
 
             if quantity == 0:
                 cart_item.delete()
