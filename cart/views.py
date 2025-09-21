@@ -41,7 +41,7 @@ def _ordered_pt_seat_fee_in_session(table: Table) -> bool:
     return OrderMenu.objects.filter(
         order__table=table,
         order__created_at__gte=activated_at,
-        menu__menu_category=SEAT_FEE_CATEGORY
+        menu__menu_name__icontains="테이블이용료"   # ✅ 부분 문자열 검색
     ).exists()
 
 
