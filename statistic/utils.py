@@ -124,14 +124,17 @@ def get_statistics(booth_id: int, request=None):
         .order_by("-total_quantity")[:3]
     )
 
+    # --- TOP3 메뉴
     top3_menus = [
         {
             "menu__menu_name": m["menu__menu_name"],
             "menu__menu_price": float(m["menu__menu_price"]),
             "menu__menu_image": (
+                # REST API (request 있는 경우 → 절대경로)
                 request.build_absolute_uri(f"{settings.MEDIA_URL}{m['menu__menu_image']}")
                 if request and m.get("menu__menu_image") not in [None, ""]
-                else None
+                # WS API (request 없는 경우 → /media/... 상대경로)
+                else (f"{settings.MEDIA_URL}{m['menu__menu_image']}" if m.get("menu__menu_image") else None)
             ),
             "total_quantity": m["total_quantity"],
         }
@@ -141,19 +144,9 @@ def get_statistics(booth_id: int, request=None):
     # --- 품절 임박 메뉴
     low_stock_qs = (
         Menu.objects.filter(booth=booth)
-        .exclude(menu_category="seat_fee")  # seat_fee 제외
-        .annotate(
-            reserved=Coalesce(
-                Sum(
-                    "ordermenu__quantity",
-                    filter=Q(ordermenu__status__in=["pending", "cooked"]),
-                ),
-                0,
-            )
-        )
-        .annotate(remaining=Greatest(F("menu_amount") - F("reserved"), Value(0)))
-        .filter(remaining__lte=5)
-        .order_by("remaining", "menu_name")  # 추가
+        .exclude(menu_category="seat_fee")
+        .filter(menu_amount__lte=5)   # 남은 수량 그대로 사용
+        .order_by("menu_amount", "menu_name")
     )
 
     low_stock = [
@@ -161,14 +154,17 @@ def get_statistics(booth_id: int, request=None):
             "menu_name": m.menu_name,
             "menu_price": float(m.menu_price),
             "menu_image": (
+                # REST API (request 있는 경우 → 절대경로)
                 request.build_absolute_uri(f"{settings.MEDIA_URL}{m.menu_image.name}")
                 if request and m.menu_image
-                else None
+                # WS API (request 없는 경우 → /media/... 상대경로)
+                else (f"{settings.MEDIA_URL}{m.menu_image.name}" if m.menu_image else None)
             ),
-            "remaining": m.remaining,
+            "remaining": m.menu_amount,   # 운영자가 수정한 수량 그대로 반영
         }
         for m in low_stock_qs
     ]
+
 
     # --- 평균 테이블 사용시간 (TableUsage + 현재 진행 중)
     table_usages = list(
