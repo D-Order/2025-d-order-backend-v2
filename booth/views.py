@@ -664,6 +664,14 @@ class BoothDeleteAPIView(APIView):
                     used_at=None
                 )
 
+            # ✅ 총매출만 웹소켓으로 0으로 반영 (lazy import)
+            from order.utils.order_broadcast import broadcast_total_revenue
+
+            total_revenue = Order.objects.filter(table__booth=booth).aggregate(
+                total=Sum("order_amount")
+            )["total"] or 0
+            broadcast_total_revenue(booth.id, total_revenue)
+
             return Response(
                 {
                     "status": "success",
