@@ -6,6 +6,8 @@ from order.models import OrderMenu, Order
 from menu.models import Menu, SetMenu
 from manager.models import Manager
 from menu.serializers import MenuSerializer, SetMenuItemSerializer, SetMenuSerializer
+SEAT_MENU_CATEGORY = "seat"
+SEAT_FEE_CATEGORY = "seat_fee"
 
 class UserBoothMenusViewSet(viewsets.ViewSet):
     permission_classes = []  # 누구나
@@ -35,12 +37,11 @@ class UserBoothMenusViewSet(viewsets.ViewSet):
                     "seat_type": "person",
                     "seat_tax_person": manager.seat_tax_person,
                     "menu_id": seat_fee_menu.id if seat_fee_menu else None,
-                    "is_soldout": False
+                    "is_seatfee_soldout":  False
                 }
                 
             elif manager.seat_type == "PT":
-                
-                is_soldout = False
+                is_seatfee_soldout = False
                 if table_num and seat_fee_menu:
                     table = Table.objects.filter(booth=booth, table_num=table_num).first()
                     if table:
@@ -51,15 +52,16 @@ class UserBoothMenusViewSet(viewsets.ViewSet):
                                 menu=seat_fee_menu,
                                 order__created_at__gte=activated_at
                             )
-                            is_soldout = qs.exists()
+                            is_seatfee_soldout = qs.exists()
                         else:
-                            # ✅ 활성화 구간이 없으면 soldout 아님
-                            is_soldout = False
+                            # ✅ 활성화 세션이 없으면 주문된 것으로 보지 않음
+                            is_seatfee_soldout = False
+                            
                 table_info = {
                     "seat_type": "table",
                     "seat_tax_table": manager.seat_tax_table,
                     "menu_id": seat_fee_menu.id if seat_fee_menu else None,
-                    "is_soldout": is_soldout,
+                    "is_seatfee_soldout": is_seatfee_soldout,
                 }
             else:
                 table_info = []
@@ -74,12 +76,12 @@ class UserBoothMenusViewSet(viewsets.ViewSet):
             setmenus_qs = setmenus_qs.filter(set_category=category)
 
         menus = MenuSerializer(menus_qs, many=True, context={'request': request}).data
-        # ✅ seat_fee soldout 여부 동기화
-        if table_info and isinstance(table_info, dict) and "is_soldout" in table_info:
-            for m in menus:
-                if m.get("menu_category") == "seat_fee":
-                    m["is_soldout"] = table_info["is_soldout"]
+        
         setmenus = SetMenuSerializer(setmenus_qs, many=True, context={'request': request}).data
+        if table_info and isinstance(table_info, dict) and "is_seatfee_soldout" in table_info:
+            for m in menus:
+                if m.get("menu_category") == SEAT_FEE_CATEGORY:
+                    m["is_seatfee_soldout"] = table_info["is_seatfee_soldout"]
         
         data = {
             "booth_id": booth.pk,
