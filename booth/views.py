@@ -12,6 +12,8 @@ from rest_framework.permissions import IsAuthenticated
 from booth.serializers import *
 from manager.models import Manager
 from django.db.models import Q
+from django.shortcuts import get_object_or_404
+from django.db import transaction
 
 SEAT_MENU_CATEGORY = "seat"
 SEAT_FEE_CATEGORY = "seat_fee"
@@ -596,3 +598,74 @@ class TableResetAPIView(APIView):
                 "code": 500,
                 "data": None
             }, status=500)
+            
+            
+class BoothDeleteAPIView(APIView):
+    """
+    DELETE /api/v2/booths/<int:booth_id>/reset/
+    운영자가 자신의 부스의 '사용자 기록'을 모두 삭제하는 API
+    (메뉴/쿠폰/부스 자체는 삭제하지 않음)
+
+    삭제 범위:
+    - 주문(Order, OrderMenu, OrderSetMenu)
+    - 장바구니(Cart, CartMenu, CartSetMenu)
+    - 직원 호출(StaffCall)
+    - 테이블 이용 기록(TableUsage)
+    초기화:
+    - Table.status = "out", activated_at=None, deactivated_at=None
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, booth_id: int):
+        manager = getattr(request.user, "manager_profile", None)
+        if not manager:
+            return Response(
+                {"status": "fail", "code": 403, "message": "운영자 권한이 없습니다."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        booth = get_object_or_404(Booth, id=booth_id)
+
+        # 본인 부스만 가능
+        if booth != manager.booth:
+            return Response(
+                {"status": "fail", "code": 403, "message": "본인 부스만 초기화할 수 있습니다."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            with transaction.atomic():
+                # 1) 주문 삭제 (Order CASCADE로 OrderMenu, OrderSetMenu 같이 삭제됨)
+                Order.objects.filter(table__booth=booth).delete()
+
+                # 2) 장바구니 삭제
+                Cart.objects.filter(table__booth=booth).delete()
+
+                # 3) 직원 호출 삭제
+                StaffCall.objects.filter(booth=booth).delete()
+
+                # 4) 테이블 이용 기록 삭제
+                from booth.models import TableUsage
+                TableUsage.objects.filter(booth=booth).delete()
+
+                # 5) 테이블 초기화 (상태/시간 리셋)
+                Table.objects.filter(booth=booth).update(
+                    status="out",
+                    activated_at=None,
+                    deactivated_at=None
+                )
+
+            return Response(
+                {
+                    "status": "success",
+                    "code": 200,
+                    "message": f"부스 {booth_id}의 사용자 기록이 초기화되었습니다.",
+                },
+                status=200,
+            )
+        except Exception as e:
+            return Response(
+                {"status": "error", "code": 500, "message": str(e)},
+                status=500,
+            )

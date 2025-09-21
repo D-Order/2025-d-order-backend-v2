@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import BoothNameAPIView, BoothRevenuesAPIView, TableEnterAPIView, TableListView, TableDetailView, TableResetAPIView, TableSeatFeeStatusView
+from .views import BoothNameAPIView, BoothRevenuesAPIView, TableEnterAPIView, TableListView, TableDetailView, TableResetAPIView, TableSeatFeeStatusView, BoothDeleteAPIView
 
 urlpatterns = [
     path('booth/tables/name/', BoothNameAPIView.as_view(), name='booth-name'),
@@ -9,5 +9,6 @@ urlpatterns = [
     path('booth/tables/<int:table_num>/', TableDetailView.as_view()),
     path('booth/tables/<int:table_num>/reset/', TableResetAPIView.as_view(), name='table-reset'),
     path("tables/<int:table_num>/seat-fee-status/", TableSeatFeeStatusView.as_view()),
+    path("booth/<int:booth_id>/reset/", BoothDeleteAPIView.as_view(), name="booth-reset"),
 
 ]
