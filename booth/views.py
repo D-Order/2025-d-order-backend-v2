@@ -13,6 +13,8 @@ from booth.serializers import *
 from manager.models import Manager
 from django.db.models import Q
 
+SEAT_MENU_CATEGORY = "seat"
+SEAT_FEE_CATEGORY = "seat_fee"
 
 class IsManagerUser(permissions.BasePermission):
     """로그인한 사용자가 Manager와 연결되어 있는지 확인"""
@@ -23,6 +25,89 @@ class IsManagerUser(permissions.BasePermission):
             request.user.is_authenticated and
             hasattr(request.user, 'manager_profile')
         )
+        
+def _is_first_session(table: Table, now_dt=None) -> bool:
+    """해당 테이블이 초기화된 이후 첫 주문인지 판별"""
+    activated_at = getattr(table, "activated_at", None)
+    qs = Order.objects.filter(table_id=table.id)
+    if activated_at:
+        qs = qs.filter(created_at__gte=activated_at)
+    return not qs.exists()
+        
+def _ordered_pt_seat_fee_in_session(table: Table) -> bool:
+    """
+    현재 테이블 활성화(activated_at) 이후 OrderMenu에서
+    PT seat_fee 메뉴가 이미 주문된 적 있는지 검사
+    """
+    activated_at = getattr(table, "activated_at", None)
+    if not activated_at:
+        return False
+
+    return OrderMenu.objects.filter(
+        order__table=table,
+        order__created_at__gte=activated_at,
+        menu__menu_category=SEAT_FEE_CATEGORY
+    ).exists()
+    
+class TableSeatFeeStatusView(APIView):
+    """
+    특정 테이블이 현재 세션(activated_at 이후)에서
+    PT seat_fee(테이블당 이용료)를 이미 주문했는지 여부 확인
+    GET /api/v2/tables/<table_num>/seat-fee-status/
+    헤더: Booth-ID
+    """
+    permission_classes = []  
+
+    def get(self, request, table_num):
+        booth_id = request.headers.get("Booth-ID")
+        if not booth_id:
+            return Response(
+                {"status": "fail", "message": "Booth-ID 헤더가 필요합니다."},
+                status=400
+            )
+
+        booth = Booth.objects.filter(pk=booth_id).first()
+        if not booth:
+            return Response({"status": "fail", "message": "해당 부스를 찾을 수 없습니다."}, status=404)
+
+        table = Table.objects.filter(booth=booth, table_num=table_num).first()
+        if not table:
+            return Response({"status": "fail", "message": "해당 테이블을 찾을 수 없습니다."}, status=404)
+
+        manager = Manager.objects.filter(booth=booth).first()
+        if not manager:
+            return Response({"status": "fail", "message": "해당 부스 운영자 정보가 없습니다."}, status=404)
+
+        # seat_type이 PT가 아닌 경우도 안내
+        if manager.seat_type != "PT":
+            return Response({
+                "status": "success",
+                "code": 200,
+                "data": {
+                    "is_pt": False,
+                    "ordered_pt_seat_fee": False,
+                    "can_add_pt_seat_fee": False,
+                    "is_first_order": False,
+                }
+            }, status=200)
+
+        # ✅ 활성화 세션에서 이미 주문된 적 있는지 검사
+        ordered_pt_seat_fee = _ordered_pt_seat_fee_in_session(table)
+        # ✅ 현재 첫 주문인지 검사 (주문 자체가 없으면 True)
+        is_first = _is_first_session(table)
+        # ✅ 추가 가능 여부
+        can_add_pt_seat_fee = (is_first and not ordered_pt_seat_fee)
+
+        return Response({
+            "status": "success",
+            "code": 200,
+            "data": {
+                "is_pt": True,
+                "ordered_pt_seat_fee": ordered_pt_seat_fee,
+                "can_add_pt_seat_fee": can_add_pt_seat_fee
+            }
+        }, status=200)
+
         
 class BoothNameAPIView(APIView):
     permission_classes = []  # 누구나
@@ -257,7 +342,7 @@ class TableListView(APIView):
                 key = f"menu_{om.menu_id}_{om.fixed_price}"
                 if key not in aggregated:
                     aggregated[key] = {
-                        "menu_name": "테이블 이용료(인당)" if om.menu.menu_category == "seat_fee" else om.menu.menu_name,
+                        "menu_name":  om.menu.menu_name,
                         "quantity": 0,
                         "fixed_price": om.fixed_price,
                         "latest_created_at": om.order.created_at,
@@ -365,7 +450,7 @@ class TableDetailView(APIView):
                 aggregated[key] = {
                     "type": "menu",
                     "menu_id": om.menu_id,
-                    "menu_name": "테이블 이용료(인당)" if om.menu.menu_category == "seat_fee" else om.menu.menu_name,
+                    "menu_name":  om.menu.menu_name,
                     "menu_price": float(om.menu.menu_price),
                     "fixed_price": om.fixed_price,
                     "quantity": 0,
