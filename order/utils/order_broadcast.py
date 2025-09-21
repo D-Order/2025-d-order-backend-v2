@@ -185,20 +185,22 @@ def broadcast_order_update(order: Order, cancelled_items: list = None):
     channel_layer = get_channel_layer()
 
     expanded = expand_order(order)
-
     cancelled_payloads = []
+
     if cancelled_items:
         for item in cancelled_items:
             rest_qty = item.get("rest_quantity", 0)
-            cancelled_payloads.append({
-                "ordermenu_id": item.get("order_menu_id"),
-                "order_id": order.id,
-                "menu_name": item.get("menu_name"),
-                "quantity": rest_qty,   # 남은 수량 반영
-                "status": "cancelled" if rest_qty == 0 else "pending",  # ✅ 전량 취소일 때만 cancelled
-                "table_num": order.table.table_num,
-                "created_at": order.created_at.isoformat(),  # 추가
-            })
+            # 전량 취소된 경우만 payload 추가
+            if rest_qty == 0:
+                cancelled_payloads.append({
+                    "ordermenu_id": item.get("order_menu_id"),
+                    "order_id": order.id,
+                    "menu_name": item.get("menu_name"),
+                    "quantity": 0,               # 전량 취소 → 0
+                    "status": "cancelled",       # 취소됨
+                    "table_num": order.table.table_num,
+                    "created_at": order.created_at.isoformat(),
+                })
 
     async_to_sync(channel_layer.group_send)(
         f"booth_{booth.id}_orders",
@@ -206,7 +208,7 @@ def broadcast_order_update(order: Order, cancelled_items: list = None):
             "type": "order_update",
             "data": {
                 "total_revenue": booth.total_revenues,
-                "orders": expanded + cancelled_payloads
+                "orders": expanded + cancelled_payloads  # 전량 취소는 cancelled_payloads 로 보존
             }
         }
     )
