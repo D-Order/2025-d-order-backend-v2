@@ -600,81 +600,64 @@ class TableResetAPIView(APIView):
                 "data": None
             }, status=500)
             
-            
+    
+    
 class BoothDeleteAPIView(APIView):
     """
-    DELETE /api/v2/booth/<int:booth_id>/reset/
+    DELETE /api/v2/booths/<int:booth_id>/reset/
     운영자가 자신의 부스의 '사용자 기록'을 모두 삭제하는 API
     (메뉴/쿠폰/부스 자체는 삭제하지 않음)
 
-    삭제 범위:
-    - 주문(Order, OrderMenu, OrderSetMenu)
-    - 장바구니(Cart, CartMenu, CartSetMenu)
-    - 직원 호출(StaffCall)
-    - 테이블 이용 기록(TableUsage)
-    초기화:
-    - Table.status = "out", activated_at=None, deactivated_at=None
+    ⚠️ 로그인 없이 누구나 호출 가능 (주의 필요)
     """
 
-    permission_classes = []
+    authentication_classes = []  # ✅ 로그인 필요 없음
+    permission_classes = []      # ✅ 권한 제한 없음
 
     def delete(self, request, booth_id: int):
-        manager = getattr(request.user, "manager_profile", None)
-        if not manager:
-            return Response(
-                {"status": "fail", "code": 403, "message": "운영자 권한이 없습니다."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
         booth = get_object_or_404(Booth, id=booth_id)
-
-        # 본인 부스만 가능
-        if booth != manager.booth:
-            return Response(
-                {"status": "fail", "code": 403, "message": "본인 부스만 초기화할 수 있습니다."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
 
         try:
             with transaction.atomic():
-                # 1) 주문 삭제
+                # --- 재고 복원 ---
+                order_menus = OrderMenu.objects.filter(order__table__booth=booth)
+                for om in order_menus.select_related("menu"):
+                    menu = om.menu
+                    menu.menu_amount = F("menu_amount") + om.quantity
+                    menu.save(update_fields=["menu_amount"])
+
+                order_setmenus = OrderSetMenu.objects.filter(order__table__booth=booth)
+                for osm in order_setmenus.select_related("set_menu"):
+                    for item in osm.set_menu.menu_items.all():
+                        menu = item.menu
+                        menu.menu_amount = F("menu_amount") + (item.quantity * osm.quantity)
+                        menu.save(update_fields=["menu_amount"])
+
+                # 주문/장바구니/직원호출/테이블이력 삭제
                 Order.objects.filter(table__booth=booth).delete()
-
-                # 2) 장바구니 삭제
                 Cart.objects.filter(table__booth=booth).delete()
-
-                # 3) 직원 호출 삭제
                 StaffCall.objects.filter(booth=booth).delete()
-
-                # 4) 테이블 이용 기록 삭제
                 from booth.models import TableUsage
                 TableUsage.objects.filter(booth=booth).delete()
 
-                # 5) 테이블 초기화
+                # 테이블 상태 초기화
                 Table.objects.filter(booth=booth).update(
-                    status="out",
-                    activated_at=None,
-                    deactivated_at=None
-                )
-                
-                # 쿠폰 사용 내역 삭제
-                TableCoupon.objects.filter(table__booth=booth).delete()
-                CouponCode.objects.filter(coupon__booth=booth).update(
-                    issued_to_table=None,
-                    used_at=None
+                    status="out", activated_at=None, deactivated_at=None
                 )
 
-                # booth.total_revenues도 초기화
+                # 쿠폰 사용 내역 초기화
+                TableCoupon.objects.filter(table__booth=booth).delete()
+                CouponCode.objects.filter(coupon__booth=booth).update(
+                    issued_to_table=None, used_at=None
+                )
+
+                # 매출 초기화
                 booth.total_revenues = 0
                 booth.save(update_fields=["total_revenues"])
 
-            # 총매출만 웹소켓으로 0으로 반영 (lazy import)
+            # 웹소켓 브로드캐스트
             from order.utils.order_broadcast import broadcast_total_revenue
-
-            total_revenue = Order.objects.filter(table__booth=booth).aggregate(
-                total=Sum("order_amount")
-            )["total"] or 0
-            broadcast_total_revenue(booth.id, total_revenue)
+            broadcast_total_revenue(booth.id, 0)
 
             return Response(
                 {
