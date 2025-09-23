@@ -2,7 +2,7 @@ import math
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from booth.models import Booth, Table
-from coupon.models import TableCoupon, CouponCode
+from coupon.models import TableCoupon, CouponCode, Coupon
 from django.utils import timezone
 from datetime import timedelta
 from order.models import *
@@ -650,6 +650,8 @@ class BoothDeleteAPIView(APIView):
                 CouponCode.objects.filter(coupon__booth=booth).update(
                     issued_to_table=None, used_at=None
                 )
+                
+                Coupon.objects.filter(booth=booth).update(quantity=F("initial_quantity"))
 
                 # 매출 초기화
                 booth.total_revenues = 0
