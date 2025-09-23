@@ -10,7 +10,7 @@ from booth.models import Table
 from manager.models import Manager
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from datetime import timedelta
+from datetime import timedelta, datetime
 from django.conf import settings
 
 
@@ -190,6 +190,37 @@ def get_statistics(booth_id: int, request=None):
     else:
         turnover_rate = 0.0
 
+    # --- 일자별 매출 (event_dates 기준, 최대 3일)
+    day_revenues = [0, 0, 0]
+    if booth.event_dates:
+        for idx, date_str in enumerate(booth.event_dates[:3]):
+            try:
+                start_date = timezone.make_aware(datetime.fromisoformat(date_str))
+            except Exception:
+                continue
+            end_date = start_date + timedelta(days=1)
+            revenue = (
+                Order.objects.filter(
+                    table__booth=booth,
+                    created_at__gte=start_date,
+                    created_at__lt=end_date,
+                )
+                .exclude(order_status="cancelled")
+                .aggregate(total=Coalesce(Sum("order_amount"), 0))["total"]
+            )
+            day_revenues[idx] = int(revenue)
+
+    # 캐시 반영
+    booth.avg_table_usage_cache = avg_table_usage
+    booth.turnover_rate_cache = turnover_rate
+    booth.day1_revenue_cache = day_revenues[0]
+    booth.day2_revenue_cache = day_revenues[1]
+    booth.day3_revenue_cache = day_revenues[2]
+    booth.save(update_fields=[
+        "avg_table_usage_cache", "turnover_rate_cache",
+        "day1_revenue_cache", "day2_revenue_cache", "day3_revenue_cache"
+    ])
+
     return {
         "total_orders": total_orders,
         "recent_orders": recent_orders,
@@ -200,11 +231,13 @@ def get_statistics(booth_id: int, request=None):
         "waiting_count": waiting_count,
         "top3_menus": top3_menus,
         "low_stock": low_stock,
-        "avg_table_usage": avg_table_usage,
-        "turnover_rate": turnover_rate,
-        "seat_type": manager.seat_type,  # 프론트에서 구분할 수 있게 seat_type 전달
+        "avg_table_usage": booth.avg_table_usage_cache,
+        "turnover_rate": booth.turnover_rate_cache,
+        "seat_type": manager.seat_type,
+        "day1_revenue": booth.day1_revenue_cache,
+        "day2_revenue": booth.day2_revenue_cache,
+        "day3_revenue": booth.day3_revenue_cache,
     }
-
 
 def push_statistics(booth_id: int):
     # lazy import → 순환 참조 방지

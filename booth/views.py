@@ -658,20 +658,29 @@ class BoothDeleteAPIView(APIView):
                     c.initial_quantity = total_codes  # 초기값도 덮어씌움
                     c.save(update_fields=["quantity", "initial_quantity"])
                     
-                # 매출 초기화
+                # ✅ 통계 캐시 & 매출 초기화
                 booth.total_revenues = 0
-                booth.save(update_fields=["total_revenues"])
+                booth.avg_table_usage_cache = 0
+                booth.turnover_rate_cache = 0.0
+                booth.day1_revenue_cache = 0
+                booth.day2_revenue_cache = 0
+                booth.day3_revenue_cache = 0
+                booth.save(update_fields=[
+                    "total_revenues",
+                    "avg_table_usage_cache",
+                    "turnover_rate_cache",
+                    "day1_revenue_cache",
+                    "day2_revenue_cache",
+                    "day3_revenue_cache",
+                ])
 
             # 웹소켓 브로드캐스트
             from order.utils.order_broadcast import broadcast_total_revenue
             broadcast_total_revenue(booth.id, 0)
 
             return Response(
-                {
-                    "status": "success",
-                    "code": 200,
-                    "message": f"부스 {booth_id}의 사용자 기록이 초기화되었습니다.",
-                },
+                {"status": "success", "code": 200,
+                "message": f"부스 {booth_id}의 사용자 기록이 초기화되었습니다."},
                 status=200,
             )
         except Exception as e:
