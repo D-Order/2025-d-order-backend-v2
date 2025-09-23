@@ -4,8 +4,8 @@ from .models import Booth, Table, TableUsage
 
 @admin.register(Booth)
 class BoothAdmin(admin.ModelAdmin):
-    list_display = ("id", "booth_name", "total_revenues")
-    search_fields = ("id", "booth_name")
+    list_display = ("id", "booth_name", "host_name", "location", "event_dates", "total_revenues")
+    search_fields = ("id", "booth_name", "host_name", "location")
     ordering = ("id",)
 
 
