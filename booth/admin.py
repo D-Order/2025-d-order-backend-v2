@@ -10,6 +10,7 @@ class BoothAdmin(admin.ModelAdmin):
         "host_name",
         "location",
         "event_dates",
+        "booth_image",   # 이미지 필드 추가
         "total_revenues",
         # 통계 캐시 필드 추가
         "avg_table_usage_cache",

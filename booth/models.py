@@ -19,6 +19,12 @@ class Booth(models.Model):
         help_text="운영 날짜 목록 (예: ['2025-09-24', '2025-09-25'])"
     )
     
+    # 이미지 필드 추가
+    booth_image = models.ImageField(
+        upload_to="booth_images/", blank=True, null=True,
+        help_text="부스 이미지 (Admin에서 업로드)"
+    )
+    
     # 통계 캐시 필드
     avg_table_usage_cache = models.IntegerField(default=0)
     turnover_rate_cache = models.FloatField(default=0.0)
