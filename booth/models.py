@@ -5,6 +5,20 @@ class Booth(models.Model):
     booth_name = models.CharField(max_length=100)
     total_revenues = models.FloatField(default=0.0)
     
+    # 새 필드 추가
+    host_name = models.CharField(
+        max_length=100, blank=True, null=True,
+        help_text="주최 이름 (없으면 빈 값 가능)"
+    )
+    location = models.CharField(
+        max_length=200, blank=True, null=True,
+        help_text="부스 위치"
+    )
+    event_dates = models.JSONField(
+        blank=True, null=True,
+        help_text="운영 날짜 목록 (예: ['2025-09-24', '2025-09-25'])"
+    )
+
     def __str__(self):
         return f"{self.id} - {self.booth_name}"
 
