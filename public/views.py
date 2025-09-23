@@ -170,7 +170,7 @@ class BoothAddView(APIView):
                 "boothUsageTable": tc["boothUsageTable"],
                 "location": b.location or "",
                 "dates": booth_dates_map.get(b.id, []),  # 내가 정의한 날짜로 덮어쓰기
-                "boothImage": b.booth_image.url if b.booth_image else "",  # 이미지 URL 반환
+                "boothImage": request.build_absolute_uri(b.booth_image.url) if b.booth_image else "",
             })
 
         return Response({
