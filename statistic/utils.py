@@ -195,15 +195,13 @@ def get_statistics(booth_id: int, request=None):
     if booth.event_dates:
         for idx, date_str in enumerate(booth.event_dates[:3]):
             try:
-                parsed = datetime.fromisoformat(date_str)
-                # date만 들어온 경우 datetime으로 변환
-                if isinstance(parsed, datetime):
-                    start_date = timezone.make_aware(parsed)
-                else:
-                    start_date = timezone.make_aware(datetime.combine(parsed, datetime.min.time()))
+                # "2025-09-23" 같은 문자열 → date 객체
+                parsed_date = datetime.fromisoformat(date_str).date()
+                start_date = datetime.combine(parsed_date, datetime.min.time())
+                end_date = start_date + timedelta(days=1)
             except Exception:
                 continue
-            end_date = start_date + timedelta(days=1)
+
             revenue = (
                 Order.objects.filter(
                     table__booth=booth,
