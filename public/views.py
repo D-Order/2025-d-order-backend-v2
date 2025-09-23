@@ -125,3 +125,40 @@ class BoothOverviewView(APIView):
             "message": "부스 검색 성공",
             "data": {"boothDetails": booth_details},
         })
+
+
+class BoothAddView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        # 테이블 집계
+        table_counts = (
+            Table.objects.values("booth_id")
+            .annotate(
+                boothAllTable=Count("id"),
+                boothUsageTable=Count(
+                    "id", filter=Q(status="activate")
+                ),
+            )
+        )
+        table_map = {row["booth_id"]: row for row in table_counts}
+
+        booths = Booth.objects.all()
+
+        booth_payloads = []
+        for b in booths:
+            tc = table_map.get(b.id, {"boothAllTable": 0, "boothUsageTable": 0})
+            booth_payloads.append({
+                "boothName": b.booth_name,
+                "hostName": b.host_name or "",      # 없으면 빈 문자열
+                "boothAllTable": tc["boothAllTable"],
+                "boothUsageTable": tc["boothUsageTable"],
+                "location": b.location or "",
+                "dates": b.event_dates or [],       # JSON 배열
+            })
+
+        return Response({
+            "statusCode": 200,
+            "message": "부스 광고페이지용 정보 조회 성공",
+            "data": {"boothDetails": booth_payloads},
+        })
