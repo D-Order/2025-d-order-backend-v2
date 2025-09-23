@@ -195,7 +195,12 @@ def get_statistics(booth_id: int, request=None):
     if booth.event_dates:
         for idx, date_str in enumerate(booth.event_dates[:3]):
             try:
-                start_date = timezone.make_aware(datetime.fromisoformat(date_str))
+                parsed = datetime.fromisoformat(date_str)
+                # date만 들어온 경우 datetime으로 변환
+                if isinstance(parsed, datetime):
+                    start_date = timezone.make_aware(parsed)
+                else:
+                    start_date = timezone.make_aware(datetime.combine(parsed, datetime.min.time()))
             except Exception:
                 continue
             end_date = start_date + timedelta(days=1)
