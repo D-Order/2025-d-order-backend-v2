@@ -1,5 +1,5 @@
 import math
-from django.db.models import Sum, F, Avg, DurationField, ExpressionWrapper, Q, Count
+from django.db.models import Sum, F, Avg, DurationField, ExpressionWrapper, Q, Count, FloatField, Value
 from django.db.models.functions import Coalesce, Greatest
 from django.utils import timezone
 from django.db.models import Value
@@ -211,7 +211,9 @@ def get_statistics(booth_id: int, request=None):
                     created_at__lt=end_date,
                 )
                 .exclude(order_status="cancelled")
-                .aggregate(total=Coalesce(Sum("order_amount"), 0))["total"]
+                .aggregate(
+                    total=Coalesce(Sum("order_amount"), Value(0, output_field=FloatField()))
+                )["total"]
             )
             day_revenues[idx] = int(revenue)
 
