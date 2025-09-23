@@ -131,19 +131,22 @@ class BoothAddView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
+        
+        # 보여줄 부스 ID 리스트
+        target_booth_ids = [25, 28, 29, 30, 32, 34, 36, 38]
+
         # 테이블 집계
         table_counts = (
             Table.objects.values("booth_id")
             .annotate(
                 boothAllTable=Count("id"),
-                boothUsageTable=Count(
-                    "id", filter=Q(status="activate")
-                ),
+                boothUsageTable=Count("id", filter=Q(status="activate")),
             )
         )
         table_map = {row["booth_id"]: row for row in table_counts}
 
-        booths = Booth.objects.all()
+        # 부스 필터링
+        booths = Booth.objects.filter(id__in=target_booth_ids)
 
         booth_payloads = []
         for b in booths:
