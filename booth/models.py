@@ -18,6 +18,15 @@ class Booth(models.Model):
         blank=True, null=True,
         help_text="운영 날짜 목록 (예: ['2025-09-24', '2025-09-25'])"
     )
+    
+    # 통계 캐시 필드
+    avg_table_usage_cache = models.IntegerField(default=0)
+    turnover_rate_cache = models.FloatField(default=0.0)
+
+    # 일자별 매출 캐시 필드
+    day1_revenue_cache = models.IntegerField(default=0)
+    day2_revenue_cache = models.IntegerField(default=0)
+    day3_revenue_cache = models.IntegerField(default=0)
 
     def __str__(self):
         return f"{self.id} - {self.booth_name}"
