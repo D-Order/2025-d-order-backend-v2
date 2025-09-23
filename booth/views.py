@@ -651,8 +651,13 @@ class BoothDeleteAPIView(APIView):
                     issued_to_table=None, used_at=None
                 )
                 
-                Coupon.objects.filter(booth=booth).update(quantity=F("initial_quantity"))
-
+                coupons = Coupon.objects.filter(booth=booth)
+                for c in coupons:
+                    total_codes = CouponCode.objects.filter(coupon=c).count()
+                    c.quantity = total_codes
+                    c.initial_quantity = total_codes  # 초기값도 덮어씌움
+                    c.save(update_fields=["quantity", "initial_quantity"])
+                    
                 # 매출 초기화
                 booth.total_revenues = 0
                 booth.save(update_fields=["total_revenues"])
