@@ -131,9 +131,21 @@ class BoothAddView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        
-        # 보여줄 부스 ID 리스트
+
+        # 보여줄 부스 ID 리스트 (정렬된 순서)
         target_booth_ids = [25, 28, 29, 30, 32, 34, 36, 38]
+
+        # 날짜 더미데이터 매핑 (부스 ID → 날짜 리스트)
+        booth_dates_map = {
+            25: ["2025-09-25 (목)", "2025-09-26 (금)"],   # 엘레펜테 만해광장
+            36: ["2025-09-25 (목)"],                      # 프론티어 사회과학관
+            38: ["2025-09-25 (목)"],                      # 푸름누리 명진관
+            30: ["2025-09-24 (수)"],                      # 문과대학 명진관
+            34: ["2025-09-24 (수)"],                      # 국어국문문예창작학부 명진관
+            32: ["2025-09-24 (수)"],                      # 철학과 명진관
+            28: ["2025-09-25 (목)"],                      # 공과대학 원흥관
+            29: ["2025-09-26 (금)"],                      # 북한학과 혜화관
+        }
 
         # 테이블 집계
         table_counts = (
@@ -145,19 +157,19 @@ class BoothAddView(APIView):
         )
         table_map = {row["booth_id"]: row for row in table_counts}
 
-        # 부스 필터링
-        booths = Booth.objects.filter(id__in=target_booth_ids)
+        # 부스 필터링 (정렬 유지)
+        booths = Booth.objects.filter(id__in=target_booth_ids).order_by("id")
 
         booth_payloads = []
         for b in booths:
             tc = table_map.get(b.id, {"boothAllTable": 0, "boothUsageTable": 0})
             booth_payloads.append({
                 "boothName": b.booth_name,
-                "hostName": b.host_name or "",      # 없으면 빈 문자열
+                "hostName": b.host_name or "",
                 "boothAllTable": tc["boothAllTable"],
                 "boothUsageTable": tc["boothUsageTable"],
                 "location": b.location or "",
-                "dates": b.event_dates or [],       # JSON 배열
+                "dates": booth_dates_map.get(b.id, []),  # 내가 정의한 날짜로 덮어쓰기
             })
 
         return Response({
