@@ -299,9 +299,26 @@ class ManagerMyPageView(RetrieveUpdateAPIView):
 
     def patch(self, request):
         instance = self.get_object()
+        old_count = instance.table_num
         serializer = self.get_serializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
+
+        new_count = serializer.validated_data.get("table_num", old_count)
+
+        if new_count > old_count:
+            for i in range(old_count + 1, new_count + 1):
+                Table.objects.create(
+                    booth=instance.booth,
+                    table_num=i,
+                    status="out",
+                )
+        elif new_count < old_count:
+            Table.objects.filter(
+                booth=instance.booth,
+                table_num__gt=new_count
+            ).delete()
+
         return Response({
             "message": "관리자 정보가 수정되었습니다.",
             "code": 200,
